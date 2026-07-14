@@ -17,9 +17,7 @@
           - tar
           - openrc
         state: present
-        update_cache: yes
-        cache_valid_time: 3600     # 1小时内缓存有效，不会每次都 update
-      when: ansible_os_family == "Alpine"
+        no_cache: yes
 
     - name: 检测系统架构
       command: uname -m
