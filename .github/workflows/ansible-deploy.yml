@@ -1,0 +1,42 @@
+name: Ansible Playbook Deploy
+
+# 触发条件：当代码推送到 main 分支时，或者手动点击触发 (workflow_dispatch)
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  ansible-execute:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 1. 检出仓库代码
+        uses: actions/checkout@v4
+
+      - name: 2. 设置 SSH 密钥环境
+        run: |
+          mkdir -p ~/.ssh
+          # 从 GitHub Secrets 中读取私钥并写入文件
+          echo "${{ secrets.ANSIBLE_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          
+          # 💡 关键：关闭 SSH 严格的主机密钥检查，防止 GitHub 首次连接时因提示 [yes/no] 而卡死终止
+          echo "StrictHostKeyChecking no" >> ~/.ssh/config
+          echo "UserKnownHostsFile /dev/null" >> ~/.ssh/config
+
+      - name: 3. 安装 Ansible 环境
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ansible
+
+      - name: 4. 动态生成或恢复 Inventory 文件
+        run: |
+          # 如果你的清单文件直接存在于仓库中（如 inventory/inventory.ini），这一步可以省略
+          # 如果敏感，可以使用如下方式动态从 Secret 生成：
+          echo "${{ secrets.ANSIBLE_INVENTORY }}" > inventory.ini
+
+      - name: 5. 执行 Ansible Playbook
+        run: |
+          # 执行你的 Podman 安装脚本，指定私钥路径
+          ansible-playbook -i inventory.ini playbooks/01-install-podman.yml --private-key=~/.ssh/id_rsa
