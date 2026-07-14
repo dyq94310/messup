@@ -8,9 +8,9 @@
     singbox_install_dir: "/etc/s-box"
     singbox_bin: "/etc/s-box/sing-box"
   
-    private_repo_url: "git@github.com:dyq94310/messup-private.git"   
-    private_config_temp: "/tmp/private-configs"
-  
+    # private_repo_url: "git@github.com:dyq94310/messup-private.git"   
+    # private_config_temp: "/tmp/private-configs"
+    private_config_temp: "{{ playbook_dir }}/../private-configs"
   tasks:
     - name: 安装依赖工具
       apk:
