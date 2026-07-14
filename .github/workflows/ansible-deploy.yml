@@ -30,13 +30,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ansible
 
-      - name: 4. 动态生成或恢复 Inventory 文件
-        run: |
-          # 如果你的清单文件直接存在于仓库中（如 inventory/inventory.ini），这一步可以省略
-          # 如果敏感，可以使用如下方式动态从 Secret 生成：
-          echo "${{ secrets.ANSIBLE_INVENTORY }}" > inventory.ini
+    #   - name: 4. 动态生成或恢复 Inventory 文件
+    #     run: |
+    #       # 如果你的清单文件直接存在于仓库中（如 inventory/inventory.ini）这一步可以省略
+    #       # 如果敏感，可以使用如下方式动态从 Secret 生成：
+        #   echo "${{ secrets.ANSIBLE_INVENTORY }}" > inventory.ini
 
       - name: 5. 执行 Ansible Playbook
         run: |
           # 执行你的 Podman 安装脚本，指定私钥路径
-          ansible-playbook -i inventory.ini playbooks/01-install-podman.yml --private-key=~/.ssh/id_rsa
+          ansible-playbook -i inventory/inventory.ini playbooks/00-bootstrap-python.yml --private-key=~/.ssh/id_rsa
+          ansible-playbook -i inventory/inventory.ini playbooks/01-deploy-singbox.yml --private-key=~/.ssh/id_rsa
