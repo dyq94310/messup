@@ -21,6 +21,10 @@ jobs:
             ssh-key: ${{ secrets.ANSIBLE_SSH_KEY }}
             path: private-config
 
+      - name: Check private repo
+        run: |
+          ls -R private-config
+
       - name: 2. 设置 SSH 密钥环境
         run: |
           mkdir -p ~/.ssh

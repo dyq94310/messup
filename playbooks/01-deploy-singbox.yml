@@ -58,6 +58,11 @@
         owner: root
         group: root
 
+    - name: Debug private config path
+      debug:
+        msg:
+          - "private config path: {{ playbook_dir }}/../private-config/singbox/{{ deployment_env }}/config.json"
+
     - name: Copy singbox config
       copy:
         src: "{{ private_config_temp }}/singbox/{{ deployment_env }}/config.json"
