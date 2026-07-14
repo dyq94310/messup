@@ -18,8 +18,8 @@ jobs:
         run: |
           mkdir -p ~/.ssh
           # 从 GitHub Secrets 中读取私钥并写入文件
-          echo "${{ secrets.ANSIBLE_SSH_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
+          echo "${{ secrets.ANSIBLE_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
           
           # 💡 关键：关闭 SSH 严格的主机密钥检查，防止 GitHub 首次连接时因提示 [yes/no] 而卡死终止
           echo "StrictHostKeyChecking no" >> ~/.ssh/config
@@ -38,6 +38,6 @@ jobs:
 
       - name: 5. 执行 Ansible Playbook
         run: |
-          # 执行你的 Podman 安装脚本，指定私钥路径
-          ansible-playbook -i inventory/inventory.ini playbooks/00-bootstrap-python.yml --private-key=~/.ssh/id_rsa
-          ansible-playbook -i inventory/inventory.ini playbooks/01-deploy-singbox.yml --private-key=~/.ssh/id_rsa
+          # 执行你的 ansible 脚本，指定私钥路径
+          ansible-playbook -i inventory/inventory.ini playbooks/00-bootstrap-python.yml --private-key=~/.ssh/id_ed25519
+          ansible-playbook -i inventory/inventory.ini playbooks/01-deploy-singbox.yml --private-key=~/.ssh/id_ed25519
