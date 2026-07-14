@@ -7,9 +7,11 @@
     singbox_version: "1.13.14"          # ← 这里修改版本
     singbox_install_dir: "/etc/s-box"
     singbox_bin: "/etc/s-box/sing-box"
-
+  
+    private_repo_url: "git@github.com:dyq94310/messup-private.git"   
+    private_config_temp: "/tmp/private-configs"
+  
   tasks:
-
     - name: 安装依赖工具
       apk:
         name:
@@ -18,6 +20,16 @@
           - openrc
         state: present
         no_cache: yes
+
+    - name: 从 Private Repo 同步最新配置
+          git:
+            repo: "{{ private_repo_url }}"
+            dest: "{{ private_config_temp }}"
+            version: main
+            force: yes
+            depth: 1
+          delegate_to: localhost
+          run_once: true
 
     - name: 检测系统架构
       command: uname -m
@@ -56,6 +68,13 @@
         owner: root
         group: root
 
+    - name: Copy singbox config
+      copy:
+        src: "{{ private_config_temp }}/singbox/{{ deployment_env }}/config.json"
+        dest: "{{ singbox_install_dir }}/config.json"
+        mode: '0600'
+      # notify: Restart singbox
+
     - name: 清理临时文件
       file:
         path: "{{ item }}"
@@ -63,6 +82,7 @@
       loop:
         - "/tmp/sing-box.tar.gz"
         - "{{ singbox_install_dir }}/sing-box-{{ singbox_version }}-linux-{{ target_arch }}"
+        - "{{ private_config_temp }}"
 
     - name: 部署基础配置文件
       copy:
