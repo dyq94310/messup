@@ -22,7 +22,7 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519_github
 
           eval "$(ssh-agent -s)"
-          ssh-add ~/.ssh/id_ed25519
+          ssh-add ~/.ssh/id_ed25519_github
           # 将环境变量传递给后续的所有 Step
           echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> $GITHUB_ENV
           echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> $GITHUB_ENV
