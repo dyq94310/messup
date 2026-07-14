@@ -10,7 +10,7 @@
   
     # private_repo_url: "git@github.com:dyq94310/messup-private.git"   
     # private_config_temp: "/tmp/private-configs"
-    private_config_temp: "{{ playbook_dir }}/../private-configs"
+    private_config_temp: "{{ playbook_dir }}/../private-config"
   tasks:
     - name: 安装依赖工具
       apk:
@@ -72,7 +72,6 @@
       loop:
         - "/tmp/sing-box.tar.gz"
         - "{{ singbox_install_dir }}/sing-box-{{ singbox_version }}-linux-{{ target_arch }}"
-        - "{{ private_config_temp }}"
 
     - name: 部署基础配置文件
       copy:
