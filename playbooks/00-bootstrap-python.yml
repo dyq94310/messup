@@ -1,0 +1,45 @@
+---
+- name: 为 Alpine 或 Debian LXC 安装 Python（Bootstrap）
+  hosts: lxc_nodes
+  gather_facts: false       
+  become: true
+
+  tasks:
+    - name: 探测系统包管理器 (Alpine 或 Debian)
+      raw: |
+        if [ -x "$(command -v apk)" ]; then
+          echo "alpine"
+        elif [ -x "$(command -v apt-get)" ]; then
+          echo "debian"
+        else
+          echo "unknown"
+        fi
+      args:
+        executable: /bin/sh
+      register: os_check
+      changed_when: false
+
+    - name: 【Alpine】通过 raw 模块安装 Python3
+      raw: apk update && apk add --no-cache python3 py3-pip ca-certificates
+      args:
+        executable: /bin/sh
+      when: "'alpine' in os_check.stdout"
+
+    - name: 【Debian】通过 raw 模块安装 Python3
+      raw: apt-get update && apt-get install -y python3 python3-pip ca-certificates
+      args:
+        executable: /bin/bash
+      when: "'debian' in os_check.stdout"
+
+    - name: 等待 SSH 稳定（仅在安装发生后）
+      pause:
+        seconds: 5
+
+    - name: 测试 Python 是否可用
+      command: python3 --version
+      register: python_version
+      changed_when: false
+
+    - name: 显示 Python 版本
+      debug:
+        msg: "✅ Python 安装成功: {{ python_version.stdout | trim }}"

@@ -1,0 +1,121 @@
+---
+- name: 在 Alpine LXC 上部署 Singbox（固定版本 + 自动适配架构）
+  hosts: lxc_nodes
+  become: true
+
+  vars:
+    singbox_version: "1.13.14"          # ← 这里修改版本
+    singbox_install_dir: "/etc/s-box"
+    singbox_bin: "/etc/s-box/sing-box"
+
+  tasks:
+
+    - name: 安装依赖工具
+      apk:
+        name:
+          - curl
+          - tar
+          - openrc
+        state: present
+        update_cache: yes
+        cache_valid_time: 3600     # 1小时内缓存有效，不会每次都 update
+      when: ansible_os_family == "Alpine"
+
+    - name: 检测系统架构
+      command: uname -m
+      register: arch
+      changed_when: false
+
+    - name: 设置下载架构
+      set_fact:
+        target_arch: "{{ 'amd64' if arch.stdout == 'x86_64' else 'arm64' if arch.stdout == 'aarch64' else 'armv7' }}"
+
+    - name: 下载 Singbox
+      get_url:
+        url: "https://github.com/SagerNet/sing-box/releases/download/v{{ singbox_version }}/sing-box-{{ singbox_version }}-linux-{{ target_arch }}.tar.gz"
+        dest: "/tmp/sing-box.tar.gz"
+        force: yes
+      retries: 3
+      delay: 5
+
+    - name: 创建安装目录
+      file:
+        path: "{{ singbox_install_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: 解压并安装
+      unarchive:
+        src: "/tmp/sing-box.tar.gz"
+        dest: "{{ singbox_install_dir }}"
+        remote_src: yes
+        extra_opts: "--strip-components=1"
+
+    - name: 设置 binary 权限
+      file:
+        path: "{{ singbox_bin }}"
+        mode: '0755'
+        owner: root
+        group: root
+
+    - name: 清理临时文件
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/tmp/sing-box.tar.gz"
+        - "{{ singbox_install_dir }}/sing-box-{{ singbox_version }}-linux-{{ target_arch }}"
+
+    - name: 部署基础配置文件
+      copy:
+        dest: "{{ singbox_install_dir }}/config.json"
+        content: |
+          {
+            "log": { "level": "info", "timestamp": true },
+            "inbounds": [{
+              "type": "mixed",
+              "listen": "0.0.0.0",
+              "listen_port": 1080
+            }],
+            "outbounds": [{ "type": "direct" }]
+          }
+        mode: '0644'
+
+    - name: 创建 OpenRC 服务
+      copy:
+        dest: "/etc/init.d/singbox"
+        content: |
+          #!/sbin/openrc-run
+          name="singbox"
+          command="{{ singbox_bin }}"
+          command_args="run -c {{ singbox_install_dir }}/config.json"
+          command_background=true
+          pidfile="/run/${RC_SVCNAME}.pid"
+          supervisor=supervise
+
+          depend() {
+              need net
+              use dns
+          }
+        mode: '0755'
+
+    - name: 启用并启动 Singbox 服务
+      service:
+        name: singbox
+        state: restarted
+        enabled: yes
+        runlevel: default
+
+    - name: 显示安装版本
+      command: "{{ singbox_bin }} version"
+      register: version_out
+      changed_when: false
+      ignore_errors: yes
+
+    - name: 最终结果
+      debug:
+        msg:
+          - "Singbox 版本: {{ singbox_version }}"
+          - "架构: {{ target_arch }}"
+          - "版本信息: {{ version_out.stdout | default('获取失败，请手动检查') }}"
+          - "服务命令: rc-service singbox status"
