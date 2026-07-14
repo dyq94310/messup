@@ -22,14 +22,14 @@
         no_cache: yes
 
     - name: 从 Private Repo 同步最新配置
-          git:
-            repo: "{{ private_repo_url }}"
-            dest: "{{ private_config_temp }}"
-            version: main
-            force: yes
-            depth: 1
-          delegate_to: localhost
-          run_once: true
+      git:
+        repo: "{{ private_repo_url }}"
+        dest: "{{ private_config_temp }}"
+        version: main
+        force: yes
+        depth: 1
+      delegate_to: localhost
+      run_once: true
 
     - name: 检测系统架构
       command: uname -m
