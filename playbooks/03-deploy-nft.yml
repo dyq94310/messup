@@ -1,5 +1,5 @@
 ---
-# 薄封装：下发 private apply.sh + mappings，OpenRC 调用 apply.sh
+# 薄封装：下发 private apply.sh + mappings，直接执行（一次性脚本，无 OpenRC）
 # mappings: private-config/nft/<deployment_env>/mappings.txt
 - name: Deploy nft port-forward on Alpine LXC
   hosts: lxc_nodes
@@ -141,23 +141,27 @@
         group: root
       register: _nft_map_copy
 
-    - name: Deploy OpenRC service for messup-nft
-      template:
-        src: "{{ playbook_dir }}/../templates/nft-messup.openrc.j2"
-        dest: "/etc/init.d/{{ nft_service }}"
-        mode: "0755"
-        owner: root
-        group: root
-      register: _nft_svc_copy
+    - name: Remove legacy OpenRC unit if present
+      file:
+        path: "/etc/init.d/{{ nft_service }}"
+        state: absent
+      register: _nft_legacy_rm
 
-    - name: Enable messup-nft at default runlevel
-      service:
-        name: "{{ nft_service }}"
-        enabled: true
-        runlevel: default
+    - name: Disable legacy messup-nft from default runlevel
+      command: "rc-update del {{ nft_service }} default"
+      register: _nft_legacy_del
+      changed_when: _nft_legacy_del.rc == 0
+      failed_when: false
 
-    - name: Apply rules via messup-nft restart
-      command: "/etc/init.d/{{ nft_service }} restart"
+    - name: Run apply.sh (one-shot)
+      command: "{{ nft_install_dir }}/apply.sh"
+      environment:
+        IN_IF: "{{ _nft_in_if }}"
+        OUT_IF: "{{ _nft_out_if }}"
+        CFG: "{{ nft_install_dir }}/mappings.txt"
+        LIMIT_RATE: "{{ nft_limit_rate }}"
+        MARK: "{{ nft_mark }}"
+        TC_ENABLED: "{{ 'yes' if (nft_tc_enabled | bool) else 'no' }}"
       register: _nft_run
       changed_when: true
 
@@ -169,13 +173,12 @@
     - name: Deployment summary
       debug:
         msg:
-          - "✅ nft port-forward deployed (apply.sh)"
+          - "✅ nft port-forward applied (one-shot apply.sh, no OpenRC)"
           - "  host:     {{ inventory_hostname }}"
           - "  env:      {{ deployment_env }}"
           - "  in_if:    {{ _nft_in_if }}"
           - "  out_if:   {{ _nft_out_if }}"
           - "  dir:      {{ nft_install_dir }}"
-          - "  files:    apply={{ _nft_apply_copy is changed }} map={{ _nft_map_copy is changed }} svc={{ _nft_svc_copy is changed }}"
+          - "  files:    apply={{ _nft_apply_copy is changed }} map={{ _nft_map_copy is changed }}"
           - "  tc:       {{ nft_tc_enabled | bool }} ({{ nft_limit_rate }})"
-          - "  service:  {{ nft_service }}"
-          - "  table:    ip forward present"
+          - "  note:     重启后需再跑 Ansible --tags nft（或自行加开机钩子）"

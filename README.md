@@ -57,7 +57,7 @@ messup/                              # 公开仓（无主机清单）
 ├── templates/
 │   ├── singbox.openrc.j2
 │   ├── smartdns.openrc.j2
-│   └── nft-messup.openrc.j2         # 调用 /etc/messup-nft/apply.sh
+
 ├── scripts/
 │   ├── setup-local.sh               # 软链 private-config
 │   └── deploy.sh                    # 本地一键部署
@@ -228,7 +228,7 @@ git add -A && git commit -m "add node-b" && git push
 | `messup-private/inventory/**` | 全量 |
 | 两仓同时改 / 公共文件 | 全量 |
 | `playbooks/01-deploy-singbox.yml` | `singbox` |
-| `playbooks/03-deploy-nft.yml` / `templates/nft-messup.openrc.j2` | `nft` |
+| `playbooks/03-deploy-nft.yml` | `nft` |
 
 > 使用 `--tags singbox` 时 bootstrap 带 `always` 标签仍会执行，保证 Python 就绪。
 
@@ -239,13 +239,13 @@ git add -A && git commit -m "add node-b" && git push
 ```bash
 rc-service smartdns status|restart|stop
 rc-service singbox status|restart|stop
-rc-service messup-nft status|restart|stop
 rc-update show default
 
 sing-box version
 sing-box check -c /etc/s-box/config.json
 smartdns -v
 nft list table ip forward
+# 手动重放: IN_IF=eth0 OUT_IF=eth0 CFG=/etc/messup-nft/mappings.txt /etc/messup-nft/apply.sh
 ```
 
 安装路径：
@@ -254,7 +254,7 @@ nft list table ip forward
 |------|---------------|------|--------|
 | sing-box | `/etc/s-box/sing-box` | `/etc/s-box/config.json` | `singbox` |
 | SmartDNS | `/usr/sbin/smartdns` | `/etc/smartdns/smartdns.conf` | `smartdns` |
-| nft | `/etc/messup-nft/apply.sh` | `/etc/messup-nft/mappings.txt` | `messup-nft` |
+| nft | `/etc/messup-nft/apply.sh`（一次性） | `/etc/messup-nft/mappings.txt` | 无（Ansible 下发后直接执行） |
 
 ---
 
