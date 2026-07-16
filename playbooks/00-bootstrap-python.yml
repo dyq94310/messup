@@ -1,11 +1,14 @@
 ---
-- name: 为 Alpine 或 Debian LXC 安装 Python（Bootstrap）
+# Bootstrap：为最小化 Alpine LXC 安装 Python3（Ansible 模块依赖）
+# 使用 raw 模块，无需目标机已有 Python
+- name: Bootstrap Python on Alpine LXC
   hosts: lxc_nodes
-  gather_facts: false       
-  become: true
+  gather_facts: false
+  become: false
+  tags: [bootstrap]
 
   tasks:
-    - name: 探测系统包管理器 (Alpine 或 Debian)
+    - name: Detect package manager
       raw: |
         if [ -x "$(command -v apk)" ]; then
           echo "alpine"
@@ -18,28 +21,62 @@
         executable: /bin/sh
       register: os_check
       changed_when: false
+      failed_when: false
 
-    - name: 【Alpine】通过 raw 模块安装 Python3
-      raw: apk update && apk add --no-cache python3 py3-pip ca-certificates
+    - name: Fail on unsupported OS
+      fail:
+        msg: >-
+          ❌ 不支持的目标系统（需要 apk 或 apt-get）。
+          检测结果: {{ os_check.stdout | default('') | trim | default('empty') }}
+          主机: {{ inventory_hostname }}
+      when: os_check.rc is defined and (os_check.rc != 0 or 'unknown' in (os_check.stdout | default('')))
+
+    - name: "[Alpine] Install Python3 + ca-certificates via raw"
+      raw: |
+        set -e
+        apk update
+        apk add --no-cache python3 ca-certificates
       args:
         executable: /bin/sh
-      when: "'alpine' in os_check.stdout"
+      when: "'alpine' in (os_check.stdout | default(''))"
+      register: alpine_py
+      changed_when: >-
+        alpine_py.stdout is defined and (
+          'Installing' in alpine_py.stdout or
+          'OK:' in alpine_py.stdout or
+          'Upgrading' in alpine_py.stdout
+        )
 
-    - name: 【Debian】通过 raw 模块安装 Python3
-      raw: apt-get update && apt-get install -y python3 python3-pip ca-certificates
+    - name: "[Debian] Install Python3 via raw"
+      raw: |
+        set -e
+        apt-get update
+        DEBIAN_FRONTEND=noninteractive apt-get install -y python3 ca-certificates
       args:
         executable: /bin/bash
-      when: "'debian' in os_check.stdout"
+      when: "'debian' in (os_check.stdout | default(''))"
+      register: debian_py
+      changed_when: >-
+        debian_py.stdout is defined and (
+          'Setting up' in debian_py.stdout or
+          'Unpacking' in debian_py.stdout
+        )
 
-    - name: 等待 SSH 稳定（仅在安装发生后）
+    - name: Brief settle after package install
       pause:
-        seconds: 5
+        seconds: 2
+      when: >
+        (alpine_py is defined and alpine_py is changed) or
+        (debian_py is defined and debian_py is changed)
 
-    - name: 测试 Python 是否可用
-      command: python3 --version
+    - name: Verify Python3
+      raw: python3 --version
+      args:
+        executable: /bin/sh
       register: python_version
       changed_when: false
+      failed_when: python_version.rc != 0
 
-    - name: 显示 Python 版本
+    - name: Show Python version
       debug:
-        msg: "✅ Python 安装成功: {{ python_version.stdout | trim }}"
+        msg: "✅ Python ready on {{ inventory_hostname }}: {{ python_version.stdout | trim }}"

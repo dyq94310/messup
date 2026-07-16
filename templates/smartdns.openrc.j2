@@ -1,0 +1,32 @@
+#!/sbin/openrc-run
+# Managed by Ansible — do not edit manually
+
+description="SmartDNS"
+command="{{ smartdns_bin }}"
+command_args="-c {{ smartdns_config }} -f"
+command_background=true
+pidfile="/run/${RC_SVCNAME}.pid"
+supervisor=supervise-daemon
+respawn_delay=2
+respawn_max=0
+
+depend() {
+    need net
+    use logger
+    before singbox
+}
+
+start_pre() {
+    checkpath --directory --mode 0755 /run
+    checkpath --directory --mode 0755 "{{ smartdns_install_dir }}"
+    checkpath --directory --mode 0755 /var/log/smartdns
+    checkpath --directory --mode 0755 /var/cache/smartdns
+    if [ ! -x "${command}" ]; then
+        eerror "smartdns binary not found: ${command}"
+        return 1
+    fi
+    if [ ! -f "{{ smartdns_config }}" ]; then
+        eerror "config not found: {{ smartdns_config }}"
+        return 1
+    fi
+}

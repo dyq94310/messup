@@ -1,0 +1,35 @@
+#!/sbin/openrc-run
+# Managed by Ansible — do not edit manually
+
+description="sing-box proxy"
+command="{{ singbox_bin }}"
+command_args="run -c {{ singbox_config }}"
+command_background=true
+pidfile="/run/${RC_SVCNAME}.pid"
+supervisor=supervise-daemon
+respawn_delay=2
+respawn_max=0
+
+depend() {
+    need net
+    use dns logger
+    after firewall
+    after smartdns
+}
+
+start_pre() {
+    checkpath --directory --mode 0755 /run
+    if [ ! -x "${command}" ]; then
+        eerror "sing-box binary not found: ${command}"
+        return 1
+    fi
+    if [ ! -f "{{ singbox_config }}" ]; then
+        eerror "config not found: {{ singbox_config }}"
+        return 1
+    fi
+    # 启动前校验配置（失败则不启动）
+    if ! "${command}" check -c "{{ singbox_config }}"; then
+        eerror "sing-box config check failed"
+        return 1
+    fi
+}

@@ -1,133 +1,227 @@
 ---
-- name: 在 Alpine LXC 上部署 Singbox（固定版本 + 自动适配架构）
+# 部署 / 更新 Sing-box（二进制 + OpenRC + 按节点私有配置）
+- name: Deploy sing-box on Alpine LXC
   hosts: lxc_nodes
-  become: true
+  become: false
+  gather_facts: true
+  tags: [singbox, proxy]
 
-  vars:
-    singbox_version: "1.13.14"          # ← 这里修改版本
-    singbox_install_dir: "/etc/s-box"
-    singbox_bin: "/etc/s-box/sing-box"
-  
-    # private_repo_url: "git@github.com:dyq94310/messup-private.git"   
-    # private_config_temp: "/tmp/private-configs"
-    private_config_temp: "{{ playbook_dir }}/../private-config"
+  pre_tasks:
+    - name: Require deployment_env
+      assert:
+        that:
+          - deployment_env is defined
+          - deployment_env | length > 0
+        fail_msg: >-
+          ❌ Host {{ inventory_hostname }} 缺少 deployment_env。
+          请在 inventory 中设置，例如: deployment_env=rear
+        success_msg: "deployment_env={{ deployment_env }}"
+
+    - name: Resolve private config path
+      set_fact:
+        _singbox_cfg_src: "{{ private_config_temp }}/singbox/{{ deployment_env }}/config.json"
+
+    - name: Ensure private config exists on control node
+      stat:
+        path: "{{ _singbox_cfg_src }}"
+      delegate_to: localhost
+      become: false
+      register: _cfg_stat
+
+    - name: Fail if private config missing
+      assert:
+        that:
+          - _cfg_stat.stat.exists
+          - _cfg_stat.stat.isreg
+        fail_msg: >-
+          ❌ 找不到节点配置: {{ _singbox_cfg_src }}
+          请确认:
+            1) messup-private 已 checkout / 软链到 private-config
+            2) 存在 singbox/{{ deployment_env }}/config.json
+            3) inventory 中 deployment_env 与目录名一致
+            4) CI 是否设置 -e private_config_temp=...
+
   tasks:
-    - name: 安装依赖工具
+    - name: Fail if not Alpine (apk missing)
+      fail:
+        msg: "❌ {{ inventory_hostname }} 不是 Alpine（未找到 apk）。当前方案仅支持 Alpine LXC。"
+      when: ansible_pkg_mgr is defined and ansible_pkg_mgr != 'apk'
+
+    - name: Install runtime dependencies (Alpine)
       apk:
         name:
           - curl
           - tar
+          - ca-certificates
           - openrc
         state: present
-        no_cache: yes
+        update_cache: true
 
-    - name: 检测系统架构
-      command: uname -m
-      register: arch
-      changed_when: false
-
-    - name: 设置下载架构
+    - name: Detect CPU architecture (sing-box release naming)
       set_fact:
-        target_arch: "{{ 'amd64' if arch.stdout == 'x86_64' else 'arm64' if arch.stdout == 'aarch64' else 'armv7' }}"
+        target_arch: >-
+          {{
+            'amd64' if ansible_architecture in ['x86_64', 'amd64'] else
+            'arm64' if ansible_architecture in ['aarch64', 'arm64'] else
+            'armv7' if ansible_architecture in ['armv7l', 'armv7'] else
+            'unknown'
+          }}
 
-    - name: 下载 Singbox
-      get_url:
-        url: "https://github.com/SagerNet/sing-box/releases/download/v{{ singbox_version }}/sing-box-{{ singbox_version }}-linux-{{ target_arch }}.tar.gz"
-        dest: "/tmp/sing-box.tar.gz"
-        force: yes
-      retries: 3
-      delay: 5
+    - name: Fail on unknown architecture
+      fail:
+        msg: >-
+          ❌ 不支持的架构: {{ ansible_architecture }}
+          支持: x86_64/amd64 → amd64, aarch64/arm64 → arm64, armv7l → armv7
+      when: target_arch == 'unknown'
 
-    - name: 创建安装目录
+    - name: Show target architecture
+      debug:
+        msg: "Host {{ inventory_hostname }} arch={{ ansible_architecture }} → {{ target_arch }}"
+
+    - name: Ensure install directory
       file:
         path: "{{ singbox_install_dir }}"
         state: directory
-        mode: '0755'
-
-    - name: 解压并安装
-      unarchive:
-        src: "/tmp/sing-box.tar.gz"
-        dest: "{{ singbox_install_dir }}"
-        remote_src: yes
-        extra_opts: "--strip-components=1"
-
-    - name: 设置 binary 权限
-      file:
-        path: "{{ singbox_bin }}"
-        mode: '0755'
+        mode: "0755"
         owner: root
         group: root
 
-    - name: Debug private config path
-      debug:
-        msg:
-          - "private config path: {{ playbook_dir }}/../private-config/singbox/{{ deployment_env }}/config.json"
+    - name: Check currently installed sing-box version
+      command: "{{ singbox_bin }} version"
+      register: _installed_ver
+      changed_when: false
+      failed_when: false
 
-    - name: Copy singbox config
-      copy:
-        src: "{{ private_config_temp }}/singbox/{{ deployment_env }}/config.json"
-        dest: "{{ singbox_install_dir }}/config.json"
-        mode: '0600'
-      # notify: Restart singbox
+    - name: Decide whether binary reinstall is needed
+      set_fact:
+        _need_bin_install: >-
+          {{
+            (_installed_ver.rc | default(1) != 0) or
+            (singbox_version not in (_installed_ver.stdout | default('')))
+          }}
 
-    - name: 清理临时文件
+    - name: Download sing-box release
+      get_url:
+        url: >-
+          https://github.com/SagerNet/sing-box/releases/download/v{{ singbox_version }}/sing-box-{{ singbox_version }}-linux-{{ target_arch }}.tar.gz
+        dest: "/tmp/sing-box-{{ singbox_version }}-{{ target_arch }}.tar.gz"
+        mode: "0644"
+        force: true
+        timeout: 120
+      register: _dl
+      retries: 3
+      delay: 5
+      until: _dl is succeeded
+      when: _need_bin_install | bool
+
+    - name: Extract sing-box binary
+      unarchive:
+        src: "/tmp/sing-box-{{ singbox_version }}-{{ target_arch }}.tar.gz"
+        dest: "{{ singbox_install_dir }}"
+        remote_src: true
+        extra_opts: ["--strip-components=1"]
+      when: _need_bin_install | bool
+      notify: Restart singbox
+
+    - name: Ensure binary executable
       file:
-        path: "{{ item }}"
-        state: absent
-      loop:
-        - "/tmp/sing-box.tar.gz"
-        - "{{ singbox_install_dir }}/sing-box-{{ singbox_version }}-linux-{{ target_arch }}"
+        path: "{{ singbox_bin }}"
+        mode: "0755"
+        owner: root
+        group: root
+      register: _bin_mode
 
-    - name: 部署基础配置文件
+    - name: Fail if binary still missing
+      stat:
+        path: "{{ singbox_bin }}"
+      register: _bin_stat
+
+    - name: Assert sing-box binary present
+      assert:
+        that:
+          - _bin_stat.stat.exists
+          - _bin_stat.stat.executable
+        fail_msg: "❌ sing-box 二进制不存在或不可执行: {{ singbox_bin }}"
+
+    - name: Deploy node-specific config from private repo
       copy:
-        dest: "{{ singbox_install_dir }}/config.json"
-        content: |
-          {
-            "log": { "level": "info", "timestamp": true },
-            "inbounds": [{
-              "type": "mixed",
-              "listen": "0.0.0.0",
-              "listen_port": 1080
-            }],
-            "outbounds": [{ "type": "direct" }]
-          }
-        mode: '0644'
+        src: "{{ _singbox_cfg_src }}"
+        dest: "{{ singbox_config }}"
+        mode: "0600"
+        owner: root
+        group: root
+        backup: true
+      notify: Restart singbox
 
-    - name: 创建 OpenRC 服务
-      copy:
-        dest: "/etc/init.d/singbox"
-        content: |
-          #!/sbin/openrc-run
-          name="singbox"
-          command="{{ singbox_bin }}"
-          command_args="run -c {{ singbox_install_dir }}/config.json"
-          command_background=true
-          pidfile="/run/${RC_SVCNAME}.pid"
-          supervisor=supervise
+    - name: Validate config with sing-box check
+      command: "{{ singbox_bin }} check -c {{ singbox_config }}"
+      register: _check
+      changed_when: false
+      failed_when: false
 
-          depend() {
-              need net
-              use dns
-          }
-        mode: '0755'
+    - name: Fail if config check failed
+      fail:
+        msg: >-
+          ❌ sing-box 配置校验失败 ({{ singbox_config }})
+          源文件: {{ _singbox_cfg_src }}
+          输出:
+          {{ _check.stdout | default('') }}
+          {{ _check.stderr | default('') }}
+      when: _check.rc != 0
 
-    - name: 启用并启动 Singbox 服务
+    - name: Deploy OpenRC service unit
+      template:
+        src: "{{ playbook_dir }}/../templates/singbox.openrc.j2"
+        dest: "/etc/init.d/{{ singbox_service }}"
+        mode: "0755"
+        owner: root
+        group: root
+      notify: Restart singbox
+
+    - name: Enable singbox at default runlevel
       service:
-        name: singbox
-        state: restarted
-        enabled: yes
+        name: "{{ singbox_service }}"
+        enabled: true
         runlevel: default
 
-    - name: 显示安装版本
+    - name: Ensure singbox is started
+      service:
+        name: "{{ singbox_service }}"
+        state: started
+
+    - name: Cleanup download archive
+      file:
+        path: "/tmp/sing-box-{{ singbox_version }}-{{ target_arch }}.tar.gz"
+        state: absent
+      when: _need_bin_install | bool
+
+    - name: Read installed version
       command: "{{ singbox_bin }} version"
       register: version_out
       changed_when: false
-      ignore_errors: yes
+      failed_when: false
 
-    - name: 最终结果
+    - name: Check service status
+      command: "rc-service {{ singbox_service }} status"
+      register: _svc_status
+      changed_when: false
+      failed_when: false
+
+    - name: Deployment summary
       debug:
         msg:
-          - "Singbox 版本: {{ singbox_version }}"
-          - "架构: {{ target_arch }}"
-          - "版本信息: {{ version_out.stdout | default('获取失败，请手动检查') }}"
-          - "服务命令: rc-service singbox status"
+          - "✅ sing-box deployed"
+          - "  host:     {{ inventory_hostname }}"
+          - "  env:      {{ deployment_env }}"
+          - "  version:  {{ singbox_version }}"
+          - "  arch:     {{ target_arch }}"
+          - "  binary:   {{ singbox_bin }}"
+          - "  config:   {{ singbox_config }}"
+          - "  detail:   {{ version_out.stdout_lines | default(['n/a']) | first }}"
+          - "  service:  {{ _svc_status.stdout | default('n/a') | trim }}"
+
+  handlers:
+    - name: Restart singbox
+      service:
+        name: "{{ singbox_service }}"
+        state: restarted

@@ -1,0 +1,253 @@
+---
+# 部署 / 更新 SmartDNS（二进制 + OpenRC + 按节点私有配置）
+- name: Deploy SmartDNS on Alpine LXC
+  hosts: lxc_nodes
+  become: false
+  gather_facts: true
+  tags: [smartdns, dns]
+
+  pre_tasks:
+    - name: Require deployment_env
+      assert:
+        that:
+          - deployment_env is defined
+          - deployment_env | length > 0
+        fail_msg: >-
+          ❌ Host {{ inventory_hostname }} 缺少 deployment_env。
+          请在 inventory 中设置，例如: deployment_env=rear
+        success_msg: "deployment_env={{ deployment_env }}"
+
+    - name: Resolve private config path
+      set_fact:
+        _smartdns_cfg_src: "{{ private_config_temp }}/smartdns/{{ deployment_env }}/smartdns.conf"
+
+    - name: Ensure private config exists on control node
+      stat:
+        path: "{{ _smartdns_cfg_src }}"
+      delegate_to: localhost
+      become: false
+      register: _cfg_stat
+
+    - name: Fail if private config missing
+      assert:
+        that:
+          - _cfg_stat.stat.exists
+          - _cfg_stat.stat.isreg
+        fail_msg: >-
+          ❌ 找不到节点配置: {{ _smartdns_cfg_src }}
+          请确认:
+            1) messup-private 已 checkout / 软链到 private-config
+            2) 存在 smartdns/{{ deployment_env }}/smartdns.conf
+            3) inventory 中 deployment_env 与目录名一致
+
+  tasks:
+    - name: Fail if not Alpine (apk missing)
+      fail:
+        msg: "❌ {{ inventory_hostname }} 不是 Alpine（未找到 apk）。当前方案仅支持 Alpine LXC。"
+      when: ansible_pkg_mgr is defined and ansible_pkg_mgr != 'apk'
+
+    - name: Install runtime dependencies (Alpine)
+      apk:
+        name:
+          - curl
+          - tar
+          - ca-certificates
+          - openrc
+        state: present
+        update_cache: true
+
+    - name: Detect CPU architecture (SmartDNS release naming)
+      set_fact:
+        smartdns_pkg_arch: >-
+          {{
+            'x86_64' if ansible_architecture in ['x86_64', 'amd64'] else
+            'aarch64' if ansible_architecture in ['aarch64', 'arm64'] else
+            'arm' if ansible_architecture in ['armv7l', 'armv7'] else
+            'unknown'
+          }}
+
+    - name: Fail on unknown architecture
+      fail:
+        msg: >-
+          ❌ 不支持的架构: {{ ansible_architecture }}
+          支持: x86_64/amd64 → x86_64, aarch64/arm64 → aarch64, armv7l → arm
+      when: smartdns_pkg_arch == 'unknown'
+
+    - name: Show target architecture
+      debug:
+        msg: "Host {{ inventory_hostname }} arch={{ ansible_architecture }} → {{ smartdns_pkg_arch }}"
+
+    - name: Ensure install and runtime directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+        owner: root
+        group: root
+      loop:
+        - "{{ smartdns_install_dir }}"
+        - /var/log/smartdns
+        - /var/cache/smartdns
+
+    - name: Check currently installed smartdns version
+      command: "{{ smartdns_bin }} -v"
+      register: _installed_ver
+      changed_when: false
+      failed_when: false
+
+    - name: Decide whether binary reinstall is needed
+      set_fact:
+        _need_bin_install: >-
+          {{
+            (_installed_ver.rc | default(1) != 0) or
+            (smartdns_version not in (_installed_ver.stdout | default('')))
+          }}
+
+    # 官方包名示例:
+    # https://github.com/pymumu/smartdns/releases/download/Release46.1/smartdns-46.1.x86_64-linux-all.tar.gz
+    - name: Download SmartDNS release tarball
+      get_url:
+        url: >-
+          https://github.com/pymumu/smartdns/releases/download/Release{{ smartdns_version }}/smartdns-{{ smartdns_version }}.{{ smartdns_pkg_arch }}-linux-all.tar.gz
+        dest: "/tmp/smartdns-{{ smartdns_version }}-{{ smartdns_pkg_arch }}.tar.gz"
+        mode: "0644"
+        force: true
+        timeout: 120
+      register: _dl
+      retries: 3
+      delay: 5
+      until: _dl is succeeded
+      when: _need_bin_install | bool
+
+    - name: Reset extract workspace
+      file:
+        path: "/tmp/smartdns-extract"
+        state: "{{ item }}"
+        mode: "0755"
+      loop:
+        - absent
+        - directory
+      when: _need_bin_install | bool
+
+    - name: Extract SmartDNS package
+      unarchive:
+        src: "/tmp/smartdns-{{ smartdns_version }}-{{ smartdns_pkg_arch }}.tar.gz"
+        dest: "/tmp/smartdns-extract"
+        remote_src: true
+      when: _need_bin_install | bool
+
+    - name: Locate smartdns binary in package
+      find:
+        paths: /tmp/smartdns-extract
+        patterns: smartdns
+        file_type: file
+        recurse: true
+      register: _found_bin
+      when: _need_bin_install | bool
+
+    - name: Fail if package has no smartdns binary
+      fail:
+        msg: "❌ SmartDNS tarball 中未找到名为 smartdns 的可执行文件"
+      when:
+        - _need_bin_install | bool
+        - (_found_bin.matched | default(0)) == 0
+
+    - name: Install smartdns binary
+      copy:
+        src: "{{ _found_bin.files[0].path }}"
+        dest: "{{ smartdns_bin }}"
+        remote_src: true
+        mode: "0755"
+        owner: root
+        group: root
+      when: _need_bin_install | bool
+      notify: Restart smartdns
+
+    - name: Ensure binary executable
+      file:
+        path: "{{ smartdns_bin }}"
+        mode: "0755"
+        owner: root
+        group: root
+
+    - name: Fail if binary still missing
+      stat:
+        path: "{{ smartdns_bin }}"
+      register: _bin_stat
+
+    - name: Assert smartdns binary present
+      assert:
+        that:
+          - _bin_stat.stat.exists
+          - _bin_stat.stat.executable
+        fail_msg: "❌ smartdns 二进制不存在或不可执行: {{ smartdns_bin }}"
+
+    - name: Deploy node-specific config from private repo
+      copy:
+        src: "{{ _smartdns_cfg_src }}"
+        dest: "{{ smartdns_config }}"
+        mode: "0644"
+        owner: root
+        group: root
+        backup: true
+      notify: Restart smartdns
+
+    - name: Deploy OpenRC service unit
+      template:
+        src: "{{ playbook_dir }}/../templates/smartdns.openrc.j2"
+        dest: "/etc/init.d/{{ smartdns_service }}"
+        mode: "0755"
+        owner: root
+        group: root
+      notify: Restart smartdns
+
+    - name: Enable smartdns at default runlevel
+      service:
+        name: "{{ smartdns_service }}"
+        enabled: true
+        runlevel: default
+
+    - name: Ensure smartdns is started
+      service:
+        name: "{{ smartdns_service }}"
+        state: started
+
+    - name: Cleanup temporary files
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/tmp/smartdns-{{ smartdns_version }}-{{ smartdns_pkg_arch }}.tar.gz"
+        - "/tmp/smartdns-extract"
+      when: _need_bin_install | bool
+
+    - name: Read installed version
+      command: "{{ smartdns_bin }} -v"
+      register: version_out
+      changed_when: false
+      failed_when: false
+
+    - name: Check service status
+      command: "rc-service {{ smartdns_service }} status"
+      register: _svc_status
+      changed_when: false
+      failed_when: false
+
+    - name: Deployment summary
+      debug:
+        msg:
+          - "✅ SmartDNS deployed"
+          - "  host:     {{ inventory_hostname }}"
+          - "  env:      {{ deployment_env }}"
+          - "  version:  {{ smartdns_version }}"
+          - "  arch:     {{ smartdns_pkg_arch }}"
+          - "  binary:   {{ smartdns_bin }}"
+          - "  config:   {{ smartdns_config }}"
+          - "  detail:   {{ version_out.stdout | default('n/a') | trim }}"
+          - "  service:  {{ _svc_status.stdout | default('n/a') | trim }}"
+
+  handlers:
+    - name: Restart smartdns
+      service:
+        name: "{{ smartdns_service }}"
+        state: restarted

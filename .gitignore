@@ -1,0 +1,53 @@
+# Ansible
+*.retry
+*.log
+.ansible/
+.ansible_async/
+ansible.cfg.local
+
+# Vault / secrets
+.vault_pass
+.vault_password
+vault_pass*
+*vault*password*
+*.vault
+
+# Private configs (never commit real private checkout / symlink here)
+private-config
+private-config/
+private-configs/
+**/secrets/
+**/*secret*
+**/*credentials*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.env
+.env.*
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Temporary / downloads
+tmp/
+temp/
+*.tmp
+*.tar.gz
+*.zip
+
+# Local test artifacts
+.molecule/
+.cache/

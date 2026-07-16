@@ -1,60 +1,240 @@
-name: Ansible Playbook Deploy
+name: Ansible Deploy
 
-# 触发条件：当代码推送到 main 分支时，或者手动点击触发 (workflow_dispatch)
+# 触发来源:
+# 1) push main          → 本仓 playbook / inventory / 版本变更
+# 2) repository_dispatch → 私有仓配置变更 (private-config-updated)
+# 3) workflow_dispatch  → 手动部署（可指定 limit / tags）
 on:
   push:
-    branches: [ "main" ]
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "LICENSE"
+      - ".gitignore"
+  repository_dispatch:
+    types: [private-config-updated]
   workflow_dispatch:
+    inputs:
+      limit:
+        description: "可选：限制目标 host（inventory 中的 host/IP），留空=全部"
+        required: false
+        default: ""
+      tags:
+        description: "可选：Ansible tags（bootstrap,smartdns,singbox），留空=自动/全部"
+        required: false
+        default: ""
+
+concurrency:
+  group: ansible-deploy-main
+  cancel-in-progress: false
 
 jobs:
-  ansible-execute:
+  deploy:
+    name: Deploy to LXC nodes
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
-      - name: 1. 检出仓库代码
-        uses: actions/checkout@v4
-
-      - name: 2. Checkout private config repo
+      - name: Checkout public playbooks (messup)
         uses: actions/checkout@v4
         with:
-            repository: dyq94310/messup-private
-            ssh-key: ${{ secrets.ANSIBLE_SSH_KEY }}
-            path: private-config
+          fetch-depth: 2
 
-      - name: Check private repo
+      # 公私钥统一使用 id_ed25519_github：
+      # - Secret ANSIBLE_SSH_KEY = 该私钥全文
+      # - 同时用于：checkout messup-private（Deploy Key）+ SSH 登录 LXC
+      - name: Require ANSIBLE_SSH_KEY
         run: |
-          ls -R private-config
+          if [ -z "${{ secrets.ANSIBLE_SSH_KEY }}" ]; then
+            echo "::error::缺少 Secret ANSIBLE_SSH_KEY（~/.ssh/id_ed25519_github 私钥全文）"
+            echo "同一把密钥需：1) 加到各 LXC authorized_keys  2) 加到 messup-private Deploy keys"
+            exit 1
+          fi
 
-      - name: 2. 设置 SSH 密钥环境
+      - name: Checkout private configs (messup-private)
+        uses: actions/checkout@v4
+        with:
+          repository: dyq94310/messup-private
+          ssh-key: ${{ secrets.ANSIBLE_SSH_KEY }}
+          path: private-config
+          ref: main
+
+      - name: List private config tree
         run: |
+          echo "== private-config =="
+          find private-config -type f ! -path '*/.git/*' | sort || true
+          test -d private-config/singbox || {
+            echo "::error::private-config/singbox 不存在；检查 id_ed25519_github 是否已加入 messup-private Deploy keys"
+            exit 1
+          }
+          test -d private-config/smartdns || {
+            echo "::error::private-config/smartdns 不存在"
+            exit 1
+          }
+
+      - name: Detect deploy tags (对应服务)
+        id: detect
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAGS: ${{ github.event.inputs.tags }}
+          INPUT_LIMIT: ${{ github.event.inputs.limit }}
+          DISPATCH_TAGS: ${{ github.event.client_payload.tags }}
+          DISPATCH_LIMIT: ${{ github.event.client_payload.limit }}
+        run: |
+          set -euo pipefail
+          TAGS=""
+          LIMIT=""
+
+          # 1) 手动 / dispatch 显式指定优先
+          if [ -n "${INPUT_TAGS:-}" ]; then
+            TAGS="$INPUT_TAGS"
+          elif [ -n "${DISPATCH_TAGS:-}" ]; then
+            TAGS="$DISPATCH_TAGS"
+          fi
+
+          if [ -n "${INPUT_LIMIT:-}" ]; then
+            LIMIT="$INPUT_LIMIT"
+          elif [ -n "${DISPATCH_LIMIT:-}" ]; then
+            LIMIT="$DISPATCH_LIMIT"
+          fi
+
+          # 2) 本仓 push：按变更路径推断 tags
+          if [ -z "$TAGS" ] && [ "$EVENT_NAME" = "push" ]; then
+            CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
+            echo "Changed files (push):"
+            echo "$CHANGED"
+            NEED_SB=0
+            NEED_SD=0
+            NEED_ALL=0
+            while IFS= read -r f; do
+              [ -z "$f" ] && continue
+              case "$f" in
+                playbooks/01-deploy-singbox.yml|templates/singbox.openrc.j2)
+                  NEED_SB=1 ;;
+                playbooks/02-deploy-smartdns.yml|templates/smartdns.openrc.j2)
+                  NEED_SD=1 ;;
+                playbooks/site.yml|playbooks/00-bootstrap-python.yml|group_vars/*|inventory/*|ansible.cfg|.github/workflows/*)
+                  NEED_ALL=1 ;;
+                *)
+                  # 其他代码变更默认全量
+                  NEED_ALL=1 ;;
+              esac
+            done <<< "$CHANGED"
+
+            if [ "$NEED_ALL" = "1" ]; then
+              TAGS=""
+            else
+              parts=()
+              [ "$NEED_SB" = "1" ] && parts+=("singbox")
+              [ "$NEED_SD" = "1" ] && parts+=("smartdns")
+              if [ ${#parts[@]} -gt 0 ]; then
+                TAGS=$(IFS=,; echo "${parts[*]}")
+              fi
+            fi
+          fi
+
+          EXTRA=""
+          if [ -n "${LIMIT:-}" ]; then
+            EXTRA="$EXTRA --limit ${LIMIT}"
+          fi
+          if [ -n "${TAGS:-}" ]; then
+            EXTRA="$EXTRA --tags ${TAGS}"
+          fi
+
+          echo "extra=${EXTRA}" >> "$GITHUB_OUTPUT"
+          echo "tags=${TAGS:-<all>}" >> "$GITHUB_OUTPUT"
+          echo "limit=${LIMIT:-<all>}" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Deploy scope"
+            echo "- event: \`${EVENT_NAME}\`"
+            echo "- tags: \`${TAGS:-all (bootstrap + smartdns + singbox)}\`"
+            echo "- limit: \`${LIMIT:-all hosts}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Setup SSH for Ansible → LXC (same id_ed25519_github)
+        run: |
+          set -euo pipefail
           mkdir -p ~/.ssh
-          # 从 GitHub Secrets 中读取私钥并写入文件
-          echo "${{ secrets.ANSIBLE_SSH_KEY }}" > ~/.ssh/id_ed25519_github
+          chmod 700 ~/.ssh
+          # 与 checkout private 使用同一把私钥（id_ed25519_github）
+          printf '%s\n' "${{ secrets.ANSIBLE_SSH_KEY }}" > ~/.ssh/id_ed25519_github
           chmod 600 ~/.ssh/id_ed25519_github
+          ssh-keygen -y -f ~/.ssh/id_ed25519_github >/dev/null || {
+            echo "::error::ANSIBLE_SSH_KEY 不是有效私钥（应为 id_ed25519_github 私钥全文）"
+            exit 1
+          }
+          cat > ~/.ssh/config <<'EOF'
+          Host *
+            StrictHostKeyChecking no
+            UserKnownHostsFile /dev/null
+            IdentityFile ~/.ssh/id_ed25519_github
+            IdentitiesOnly yes
+            ServerAliveInterval 30
+            ServerAliveCountMax 6
+          EOF
+          sed -i 's/^[[:space:]]*//' ~/.ssh/config
+          chmod 600 ~/.ssh/config
 
-          eval "$(ssh-agent -s)"
-          ssh-add ~/.ssh/id_ed25519_github
-          # 将环境变量传递给后续的所有 Step
-          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> $GITHUB_ENV
-          echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> $GITHUB_ENV
-          
-          # 💡 关键：关闭 SSH 严格的主机密钥检查，防止 GitHub 首次连接时因提示 [yes/no] 而卡死终止
-          echo "StrictHostKeyChecking no" >> ~/.ssh/config
-          echo "UserKnownHostsFile /dev/null" >> ~/.ssh/config
-
-      - name: 3. 安装 Ansible 环境
+      - name: Install Ansible
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ansible
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ansible
+          ansible --version
 
-    #   - name: 4. 动态生成或恢复 Inventory 文件
-    #     run: |
-    #       # 如果你的清单文件直接存在于仓库中（如 inventory/inventory.ini）这一步可以省略
-    #       # 如果敏感，可以使用如下方式动态从 Secret 生成：
-        #   echo "${{ secrets.ANSIBLE_INVENTORY }}" > inventory.ini
-
-      - name: 5. 执行 Ansible Playbook
+      - name: Ping inventory (connectivity check)
+        env:
+          ANSIBLE_HOST_KEY_CHECKING: "False"
         run: |
-          # 执行你的 ansible 脚本，指定私钥路径
-          ansible-playbook -i inventory/inventory.ini playbooks/00-bootstrap-python.yml --private-key=~/.ssh/id_ed25519_github
-          ansible-playbook -i inventory/inventory.ini playbooks/01-deploy-singbox.yml --private-key=~/.ssh/id_ed25519_github
+          set -euo pipefail
+          LIMIT="${{ steps.detect.outputs.limit }}"
+          LIMIT_ARGS=""
+          if [ -n "${LIMIT}" ] && [ "${LIMIT}" != "<all>" ]; then
+            LIMIT_ARGS="--limit ${LIMIT}"
+          fi
+          # shellcheck disable=SC2086
+          ansible lxc_nodes -i inventory/inventory.ini \
+            --private-key ~/.ssh/id_ed25519_github \
+            -m ping ${LIMIT_ARGS} || {
+            echo "::error::无法 SSH 到目标节点。检查 ANSIBLE_SSH_KEY(id_ed25519_github)、inventory 端口与 authorized_keys"
+            exit 1
+          }
+
+      - name: Run site playbook
+        env:
+          ANSIBLE_HOST_KEY_CHECKING: "False"
+          ANSIBLE_FORCE_COLOR: "1"
+        run: |
+          set -euo pipefail
+          EXTRA="${{ steps.detect.outputs.extra }}"
+          echo "Running: ansible-playbook playbooks/site.yml ${EXTRA:-}"
+          # shellcheck disable=SC2086
+          ansible-playbook \
+            -i inventory/inventory.ini \
+            playbooks/site.yml \
+            --private-key ~/.ssh/id_ed25519_github \
+            -e "private_config_temp=${GITHUB_WORKSPACE}/private-config" \
+            ${EXTRA}
+
+      - name: Deploy finished
+        if: success()
+        run: |
+          echo "✅ Ansible deploy completed successfully"
+          echo "Trigger: ${{ github.event_name }}"
+          echo "Tags: ${{ steps.detect.outputs.tags }}"
+          echo "Limit: ${{ steps.detect.outputs.limit }}"
+          {
+            echo ""
+            echo "### Result"
+            echo "✅ success"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Deploy failed
+        if: failure()
+        run: |
+          echo "::error::Ansible deploy failed. 检查 Secrets、inventory、目标机 SSH 与 private 配置路径。"
+          {
+            echo ""
+            echo "### Result"
+            echo "❌ failed — 检查 Secrets / inventory / SSH / private-config 路径"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
