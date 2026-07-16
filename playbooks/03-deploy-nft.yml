@@ -1,7 +1,6 @@
 ---
-# 部署 / 更新 nft 端口转发（DNAT + masquerade + 可选 tc）
+# 薄封装：下发 private apply.sh + mappings，OpenRC 调用 apply.sh
 # mappings: private-config/nft/<deployment_env>/mappings.txt
-# 格式: proto lport dip dport
 - name: Deploy nft port-forward on Alpine LXC
   hosts: lxc_nodes
   become: false
@@ -21,9 +20,17 @@
           请在 inventory 中设置，例如: deployment_env=rear
         success_msg: "deployment_env={{ deployment_env }}"
 
-    - name: Resolve nft mappings path
+    - name: Resolve private nft paths
       set_fact:
         _nft_map_src: "{{ private_config_temp }}/nft/{{ deployment_env }}/mappings.txt"
+        _nft_apply_src: "{{ private_config_temp }}/nft/apply.sh"
+
+    - name: Ensure apply.sh exists on control node
+      stat:
+        path: "{{ _nft_apply_src }}"
+      delegate_to: localhost
+      become: false
+      register: _nft_apply_stat
 
     - name: Ensure mappings exists on control node
       stat:
@@ -32,55 +39,19 @@
       become: false
       register: _nft_map_stat
 
-    - name: Fail if mappings missing
+    - name: Fail if private nft files missing
       assert:
         that:
+          - _nft_apply_stat.stat.exists
+          - _nft_apply_stat.stat.isreg
           - _nft_map_stat.stat.exists
           - _nft_map_stat.stat.isreg
         fail_msg: >-
-          ❌ 找不到 nft mappings: {{ _nft_map_src }}
-          请确认:
-            1) messup-private 已 checkout / 软链到 private-config
-            2) 存在 nft/{{ deployment_env }}/mappings.txt
-            3) inventory 中 deployment_env 与目录名一致
-
-    - name: Parse mappings on control node
-      command:
-        argv:
-          - python3
-          - -c
-          - |
-            import json, sys
-            path = sys.argv[1]
-            rows = []
-            with open(path, encoding="utf-8") as f:
-                for raw in f:
-                    line = raw.strip()
-                    if not line or line.startswith("#"):
-                        continue
-                    parts = line.split()
-                    if len(parts) != 4 or parts[0] not in ("tcp", "udp"):
-                        raise SystemExit(f"bad mapping line: {line!r}")
-                    rows.append(
-                        {
-                            "proto": parts[0],
-                            "lport": parts[1],
-                            "dip": parts[2],
-                            "dport": parts[3],
-                        }
-                    )
-            if not rows:
-                raise SystemExit("no valid mappings")
-            print(json.dumps(rows))
-          - "{{ _nft_map_src }}"
-      delegate_to: localhost
-      become: false
-      register: _nft_parse
-      changed_when: false
-
-    - name: Set parsed mappings
-      set_fact:
-        _nft_mappings: "{{ _nft_parse.stdout | from_json }}"
+          ❌ 缺少 private nft 文件:
+            apply.sh: {{ _nft_apply_src }}
+            mappings: {{ _nft_map_src }}
+          请确认 messup-private 已软链/checkout 为 private-config，
+          且存在 nft/apply.sh 与 nft/{{ deployment_env }}/mappings.txt
 
   tasks:
     - name: Fail if not Alpine (apk missing)
@@ -88,10 +59,11 @@
         msg: "❌ {{ inventory_hostname }} 不是 Alpine（未找到 apk）。当前方案仅支持 Alpine LXC。"
       when: ansible_pkg_mgr is defined and ansible_pkg_mgr != 'apk'
 
-    - name: Install nftables and iproute2 (Alpine)
+    - name: Install nftables, iptables, iproute2 (Alpine)
       apk:
         name:
           - nftables
+          - iptables
           - iproute2
         state: present
         update_cache: true
@@ -107,7 +79,7 @@
         msg: >-
           ❌ nft 无法操作 netlink（{{ _nft_preflight.stderr | default(_nft_preflight.msg) | trim }}）。
           容器/LXC 需 CAP_NET_ADMIN（及通常 CAP_NET_RAW）。
-          Proxmox 示例：去掉 lxc.cap.drop 中的 net_admin，或显式保留 net_admin 后重启 CT。
+          Proxmox：勿 drop net_admin，重启 CT 后执行 nft list tables 应成功。
       when: _nft_preflight.rc != 0
 
     - name: Detect default route interface
@@ -125,7 +97,7 @@
       fail:
         msg: >-
           ❌ 无法探测默认路由网卡，且未设置 nft_in_if。
-          请在 inventory 设置 nft_in_if / nft_out_if，或确认 ip -4 route show default 可用。
+          请在 inventory 设置 nft_in_if / nft_out_if。
       when: >-
         (nft_in_if | default('') | length == 0)
         and (_nft_def_if.stdout | default('') | trim | length == 0)
@@ -140,166 +112,70 @@
         msg: >-
           host={{ inventory_hostname }} env={{ deployment_env }}
           in={{ _nft_in_if }} out={{ _nft_out_if }}
-          mappings={{ _nft_mappings | length }}
           tc={{ nft_tc_enabled | bool }} rate={{ nft_limit_rate }}
+          apply={{ nft_install_dir }}/apply.sh
 
-    # LXC 常见：宿主已开转发，容器内 sysctl 只读；只要当前为 1 即可
-    - name: Check IPv4 forwarding
-      command: sysctl -n net.ipv4.ip_forward
-      register: _fwd_cur
-      changed_when: false
-
-    - name: Enable IPv4 forwarding (runtime, if writable)
-      command: sysctl -w net.ipv4.ip_forward=1
-      register: _fwd
-      changed_when: "'net.ipv4.ip_forward = 1' in (_fwd.stdout | default(''))"
-      failed_when: false
-      when: (_fwd_cur.stdout | default('') | trim) != "1"
-
-    - name: Re-check IPv4 forwarding after enable attempt
-      command: sysctl -n net.ipv4.ip_forward
-      register: _fwd_after
-      changed_when: false
-      when: (_fwd_cur.stdout | default('') | trim) != "1"
-
-    - name: Fail if IPv4 forwarding is off
-      fail:
-        msg: >-
-          ❌ net.ipv4.ip_forward 非 1（当前={{ _fwd_after.stdout | default(_fwd_cur.stdout) | default('?') | trim }}），
-          且容器内无法写入 sysctl。请在宿主机开启转发或允许该 sysctl。
-      when: >-
-        (_fwd_cur.stdout | default('') | trim) != "1"
-        and (_fwd_after.stdout | default('') | trim) != "1"
-
-    - name: Persist IPv4 forwarding (best-effort in container)
-      copy:
-        dest: /etc/sysctl.d/99-messup-forward.conf
-        mode: "0644"
-        owner: root
-        group: root
-        content: |
-          # Managed by Ansible — messup nft
-          net.ipv4.ip_forward = 1
-      failed_when: false
-
-    - name: Ensure nft rules directory
+    - name: Ensure install directory
       file:
-        path: "{{ nft_rules_path | dirname }}"
+        path: "{{ nft_install_dir }}"
         state: directory
         mode: "0755"
         owner: root
         group: root
 
-    - name: Deploy nft ruleset
-      template:
-        src: "{{ playbook_dir }}/../templates/nft-forward.nft.j2"
-        dest: "{{ nft_rules_path }}"
+    - name: Deploy apply.sh
+      copy:
+        src: "{{ _nft_apply_src }}"
+        dest: "{{ nft_install_dir }}/apply.sh"
+        mode: "0755"
+        owner: root
+        group: root
+      register: _nft_apply_copy
+
+    - name: Deploy mappings.txt
+      copy:
+        src: "{{ _nft_map_src }}"
+        dest: "{{ nft_install_dir }}/mappings.txt"
         mode: "0644"
         owner: root
         group: root
-      register: _nft_rules_file
-      notify: Reload messup-nft
-
-    - name: Remove existing messup nft table if present
-      shell: |
-        set -e
-        if nft list table ip messup >/dev/null 2>&1; then
-          nft delete table ip messup
-          echo deleted
-        else
-          echo absent
-        fi
-      args:
-        executable: /bin/sh
-      register: _nft_del
-      changed_when: "'deleted' in _nft_del.stdout"
-      when: _nft_rules_file is changed
-
-    - name: Apply nft ruleset
-      command: "nft -f {{ nft_rules_path }}"
-      register: _nft_apply
-      changed_when: _nft_rules_file is changed
-      when: _nft_rules_file is changed
-
-    - name: Ensure messup nft table present
-      shell: |
-        set -e
-        if nft list table ip messup >/dev/null 2>&1; then
-          echo present
-        else
-          nft -f "{{ nft_rules_path }}"
-          echo applied
-        fi
-      args:
-        executable: /bin/sh
-      register: _nft_ensure
-      changed_when: "'applied' in _nft_ensure.stdout"
-
-    - name: Apply tc QoS
-      shell: |
-        set -e
-        setup_tc_qos() {
-          IFACE="$1"
-          tc qdisc del dev "$IFACE" root 2>/dev/null || true
-          tc qdisc add dev "$IFACE" root handle 1: htb default 10
-          tc class add dev "$IFACE" parent 1: classid 1:10 htb \
-            rate "{{ nft_limit_rate }}" ceil "{{ nft_limit_rate }}" burst 32k cburst 32k
-          tc qdisc add dev "$IFACE" parent 1:10 handle 10: fq_codel limit 10000 flows 1024
-        }
-        IN_IF="{{ _nft_in_if }}"
-        OUT_IF="{{ _nft_out_if }}"
-        if [ "$IN_IF" = "$OUT_IF" ] && [ -n "$OUT_IF" ]; then
-          setup_tc_qos "$OUT_IF"
-        else
-          [ -n "$OUT_IF" ] && setup_tc_qos "$OUT_IF"
-          [ -n "$IN_IF" ] && [ "$IN_IF" != "$OUT_IF" ] && setup_tc_qos "$IN_IF"
-        fi
-      args:
-        executable: /bin/sh
-      when: nft_tc_enabled | bool
-      changed_when: true
+      register: _nft_map_copy
 
     - name: Deploy OpenRC service for messup-nft
       template:
         src: "{{ playbook_dir }}/../templates/nft-messup.openrc.j2"
-        dest: /etc/init.d/messup-nft
+        dest: "/etc/init.d/{{ nft_service }}"
         mode: "0755"
         owner: root
         group: root
-      notify: Reload messup-nft
+      register: _nft_svc_copy
 
     - name: Enable messup-nft at default runlevel
       service:
-        name: messup-nft
+        name: "{{ nft_service }}"
         enabled: true
         runlevel: default
 
-    - name: Ensure messup-nft is started
-      service:
-        name: messup-nft
-        state: started
+    - name: Apply rules via messup-nft restart
+      command: "/etc/init.d/{{ nft_service }} restart"
+      register: _nft_run
+      changed_when: true
 
-    - name: Read applied nft table
-      command: nft list table ip messup
+    - name: Verify nft table
+      command: nft list table ip forward
       register: _nft_list
       changed_when: false
 
     - name: Deployment summary
       debug:
         msg:
-          - "✅ nft port-forward deployed"
-          - "  host:      {{ inventory_hostname }}"
-          - "  env:       {{ deployment_env }}"
-          - "  in_if:     {{ _nft_in_if }}"
-          - "  out_if:    {{ _nft_out_if }}"
-          - "  mappings:  {{ _nft_mappings | length }}"
-          - "  rules:     {{ nft_rules_path }}"
-          - "  tc:        {{ nft_tc_enabled | bool }} ({{ nft_limit_rate }})"
-          - "  mark:      {{ nft_mark }}"
-          - "  table:     ip messup present"
-
-  handlers:
-    - name: Reload messup-nft
-      service:
-        name: messup-nft
-        state: restarted
+          - "✅ nft port-forward deployed (apply.sh)"
+          - "  host:     {{ inventory_hostname }}"
+          - "  env:      {{ deployment_env }}"
+          - "  in_if:    {{ _nft_in_if }}"
+          - "  out_if:   {{ _nft_out_if }}"
+          - "  dir:      {{ nft_install_dir }}"
+          - "  files:    apply={{ _nft_apply_copy is changed }} map={{ _nft_map_copy is changed }} svc={{ _nft_svc_copy is changed }}"
+          - "  tc:       {{ nft_tc_enabled | bool }} ({{ nft_limit_rate }})"
+          - "  service:  {{ nft_service }}"
+          - "  table:    ip forward present"
