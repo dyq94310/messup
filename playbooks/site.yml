@@ -1,11 +1,12 @@
 ---
-# 一键全量部署：Bootstrap → SmartDNS → Sing-box
+# 一键全量部署：Bootstrap → SmartDNS → Sing-box → nft
 # 用法:
 #   ansible-playbook playbooks/site.yml
 #   ansible-playbook playbooks/site.yml --limit 172.245.220.230
 #   ansible-playbook playbooks/site.yml --tags singbox
 #   ansible-playbook playbooks/site.yml --tags smartdns
-#   ansible-playbook playbooks/site.yml --tags singbox,smartdns
+#   ansible-playbook playbooks/site.yml --tags nft
+#   ansible-playbook playbooks/site.yml --tags singbox,smartdns,nft
 
 - name: Import bootstrap
   import_playbook: 00-bootstrap-python.yml
@@ -18,3 +19,7 @@
 - name: Import Sing-box deploy
   import_playbook: 01-deploy-singbox.yml
   tags: [singbox, proxy]
+
+- name: Import nft port-forward deploy
+  import_playbook: 03-deploy-nft.yml
+  tags: [nft, nat]

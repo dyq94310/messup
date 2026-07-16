@@ -20,7 +20,7 @@ on:
         required: false
         default: ""
       tags:
-        description: "可选：Ansible tags（bootstrap,smartdns,singbox），留空=自动/全部"
+        description: "可选：Ansible tags（bootstrap,smartdns,singbox,nft），留空=自动/全部"
         required: false
         default: ""
 
@@ -103,34 +103,38 @@ jobs:
             CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
             echo "Changed files (push):"
             echo "$CHANGED"
-            NEED_SB=0
-            NEED_SD=0
-            NEED_ALL=0
-            while IFS= read -r f; do
-              [ -z "$f" ] && continue
-              case "$f" in
-                playbooks/01-deploy-singbox.yml|templates/singbox.openrc.j2)
-                  NEED_SB=1 ;;
-                playbooks/02-deploy-smartdns.yml|templates/smartdns.openrc.j2)
-                  NEED_SD=1 ;;
-                playbooks/site.yml|playbooks/00-bootstrap-python.yml|ansible.cfg|.github/workflows/*)
-                  NEED_ALL=1 ;;
-                *)
-                  # 其他代码变更默认全量
-                  NEED_ALL=1 ;;
-              esac
-            done <<< "$CHANGED"
+              NEED_SB=0
+              NEED_SD=0
+              NEED_NFT=0
+              NEED_ALL=0
+              while IFS= read -r f; do
+                [ -z "$f" ] && continue
+                case "$f" in
+                  playbooks/01-deploy-singbox.yml|templates/singbox.openrc.j2)
+                    NEED_SB=1 ;;
+                  playbooks/02-deploy-smartdns.yml|templates/smartdns.openrc.j2)
+                    NEED_SD=1 ;;
+                  playbooks/03-deploy-nft.yml|templates/nft-forward.nft.j2|templates/nft-messup.openrc.j2)
+                    NEED_NFT=1 ;;
+                  playbooks/site.yml|playbooks/00-bootstrap-python.yml|ansible.cfg|.github/workflows/*)
+                    NEED_ALL=1 ;;
+                  *)
+                    # 其他代码变更默认全量
+                    NEED_ALL=1 ;;
+                esac
+              done <<< "$CHANGED"
 
-            if [ "$NEED_ALL" = "1" ]; then
-              TAGS=""
-            else
-              parts=()
-              [ "$NEED_SB" = "1" ] && parts+=("singbox")
-              [ "$NEED_SD" = "1" ] && parts+=("smartdns")
-              if [ ${#parts[@]} -gt 0 ]; then
-                TAGS=$(IFS=,; echo "${parts[*]}")
+              if [ "$NEED_ALL" = "1" ]; then
+                TAGS=""
+              else
+                parts=()
+                [ "$NEED_SB" = "1" ] && parts+=("singbox")
+                [ "$NEED_SD" = "1" ] && parts+=("smartdns")
+                [ "$NEED_NFT" = "1" ] && parts+=("nft")
+                if [ ${#parts[@]} -gt 0 ]; then
+                  TAGS=$(IFS=,; echo "${parts[*]}")
+                fi
               fi
-            fi
           fi
 
           EXTRA=""

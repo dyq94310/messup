@@ -1,0 +1,72 @@
+#!/sbin/openrc-run
+# Managed by Ansible — do not edit manually
+# 加载 messup nft 规则；可选恢复 tc 限速
+
+description="messup nft port-forward (DNAT/masquerade)"
+rules_file="{{ nft_rules_path }}"
+in_if="{{ _nft_in_if }}"
+out_if="{{ _nft_out_if }}"
+limit_rate="{{ nft_limit_rate }}"
+tc_enabled="{{ 'yes' if (nft_tc_enabled | bool) else 'no' }}"
+
+depend() {
+	need net
+	after firewall
+}
+
+setup_tc_qos() {
+	local IFACE="$1"
+	tc qdisc del dev "$IFACE" root 2>/dev/null || true
+	tc qdisc add dev "$IFACE" root handle 1: htb default 10
+	tc class add dev "$IFACE" parent 1: classid 1:10 htb rate "$limit_rate" ceil "$limit_rate" burst 32k cburst 32k
+	tc qdisc add dev "$IFACE" parent 1:10 handle 10: fq_codel limit 10000 flows 1024
+}
+
+apply_tc() {
+	[ "$tc_enabled" = "yes" ] || return 0
+	if [ "$in_if" = "$out_if" ] && [ -n "$out_if" ]; then
+		setup_tc_qos "$out_if"
+	else
+		[ -n "$out_if" ] && setup_tc_qos "$out_if"
+		[ -n "$in_if" ] && [ "$in_if" != "$out_if" ] && setup_tc_qos "$in_if"
+	fi
+}
+
+clear_tc() {
+	[ "$tc_enabled" = "yes" ] || return 0
+	[ -n "$out_if" ] && tc qdisc del dev "$out_if" root 2>/dev/null || true
+	if [ -n "$in_if" ] && [ "$in_if" != "$out_if" ]; then
+		tc qdisc del dev "$in_if" root 2>/dev/null || true
+	fi
+}
+
+start() {
+	ebegin "Loading messup nft rules from ${rules_file}"
+	if [ ! -f "${rules_file}" ]; then
+		eend 1 "rules file missing: ${rules_file}"
+		return 1
+	fi
+	nft -f "${rules_file}"
+	eend $? || return 1
+	ebegin "Applying messup tc qos (enabled=${tc_enabled})"
+	apply_tc
+	eend $?
+}
+
+stop() {
+	ebegin "Removing messup nft tables"
+	nft list table ip messup >/dev/null 2>&1 && nft delete table ip messup
+	eend 0
+	ebegin "Clearing messup tc qos"
+	clear_tc
+	eend 0
+}
+
+status() {
+	if nft list table ip messup >/dev/null 2>&1; then
+		einfo "messup nft table present"
+		return 0
+	fi
+	einfo "messup nft table absent"
+	return 3
+}

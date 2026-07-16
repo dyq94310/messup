@@ -1,13 +1,13 @@
 # messup
 
-公开 Ansible 仓库：向多台 **Alpine LXC** 二进制部署 **sing-box** 与 **SmartDNS**（OpenRC 托管）。
+公开 Ansible 仓库：向多台 **Alpine LXC** 部署 **sing-box**、**SmartDNS** 与 **nft 端口转发**（OpenRC 托管）。
 
-敏感配置（inventory、`config.json`、`smartdns.conf`）存放在私有仓库 **messup-private**，由 CI / 本地流程注入。
+敏感配置（inventory、`config.json`、`smartdns.conf`、`nft/mappings.txt`）存放在私有仓库 **messup-private**，由 CI / 本地流程注入。
 
 | 仓库 | 可见性 | 内容 |
 |------|--------|------|
 | [messup](https://github.com/dyq94310/messup) | Public | Playbook、OpenRC 模板、CI |
-| [messup-private](https://github.com/dyq94310/messup-private) | Private | inventory、各节点 sing-box / SmartDNS 配置 |
+| [messup-private](https://github.com/dyq94310/messup-private) | Private | inventory、sing-box / SmartDNS / nft mappings |
 
 ---
 
@@ -23,10 +23,11 @@
                                              │ SSH
 ┌─────────────────┐     push      ┌──────────▼───────────┐
 │  messup-private │ ──repository_ │  Alpine LXC nodes    │
-│  (private)      │   _dispatch──►│  sing-box + smartdns │
+│  (private)      │   _dispatch──►│  sing-box/smartdns/nft│
 │  inventory/     │               └──────────────────────┘
 │  singbox/<env>/ │
 │  smartdns/<env>/│
+│  nft/<env>/     │
 └─────────────────┘
 ```
 
@@ -34,8 +35,8 @@
 
 | inventory | 私有配置 |
 |-----------|----------|
-| `deployment_env=rear` | `singbox/rear/config.json` + `smartdns/rear/smartdns.conf` |
-| `deployment_env=node-b` | `singbox/node-b/config.json` + `smartdns/node-b/smartdns.conf` |
+| `deployment_env=rear` | `singbox/rear/` + `smartdns/rear/` + `nft/rear/mappings.txt` |
+| `deployment_env=pre\|ix` | 对应 `nft/<env>/mappings.txt`（及可选 singbox/smartdns） |
 
 - 架构自动识别：`x86_64→amd64` / `aarch64→arm64`（sing-box）；SmartDNS 使用 `x86_64` / `aarch64` 官方包名
 - 仅配置变更时只重启服务；版本号变化时才重新下载二进制
@@ -48,13 +49,16 @@
 messup/                              # 公开仓（无主机清单）
 ├── ansible.cfg                      # inventory → private-config/inventory/
 ├── playbooks/
-│   ├── site.yml                     # 入口：bootstrap → smartdns → singbox
+│   ├── site.yml                     # bootstrap → smartdns → singbox → nft
 │   ├── 00-bootstrap-python.yml
 │   ├── 01-deploy-singbox.yml
-│   └── 02-deploy-smartdns.yml
+│   ├── 02-deploy-smartdns.yml
+│   └── 03-deploy-nft.yml
 ├── templates/
 │   ├── singbox.openrc.j2
-│   └── smartdns.openrc.j2
+│   ├── smartdns.openrc.j2
+│   ├── nft-forward.nft.j2
+│   └── nft-messup.openrc.j2
 ├── scripts/
 │   ├── setup-local.sh               # 软链 private-config
 │   └── deploy.sh                    # 本地一键部署
@@ -64,10 +68,11 @@ messup/                              # 公开仓（无主机清单）
 
 messup-private/                      # 私有仓（本地/CI 注入为 private-config）
 ├── inventory/
-│   ├── inventory.ini                # 主机 IP/端口 + deployment_env
-│   └── group_vars/all.yml           # singbox_version / smartdns_version / 路径
+│   ├── inventory.ini
+│   └── group_vars/all.yml           # 版本号 + nft 默认参数
 ├── singbox/<env>/config.json
-└── smartdns/<env>/smartdns.conf
+├── smartdns/<env>/smartdns.conf
+└── nft/<env>/mappings.txt           # proto lport dip dport
 ```
 
 ---
@@ -219,9 +224,11 @@ git add -A && git commit -m "add node-b" && git push
 |----------|-----------|
 | `messup-private/singbox/**` | `singbox`（含 bootstrap） |
 | `messup-private/smartdns/**` | `smartdns` |
+| `messup-private/nft/**` | `nft` |
 | `messup-private/inventory/**` | 全量 |
-| 两仓同时改 / 公共文件 | 全量（bootstrap + 两服务） |
+| 两仓同时改 / 公共文件 | 全量 |
 | `playbooks/01-deploy-singbox.yml` | `singbox` |
+| `playbooks/03-deploy-nft.yml` / `templates/nft*` | `nft` |
 
 > 使用 `--tags singbox` 时 bootstrap 带 `always` 标签仍会执行，保证 Python 就绪。
 
@@ -232,19 +239,22 @@ git add -A && git commit -m "add node-b" && git push
 ```bash
 rc-service smartdns status|restart|stop
 rc-service singbox status|restart|stop
+rc-service messup-nft status|restart|stop
 rc-update show default
 
 sing-box version
 sing-box check -c /etc/s-box/config.json
 smartdns -v
+nft list table ip messup
 ```
 
 安装路径：
 
-| 组件 | 二进制 | 配置 | 服务名 |
-|------|--------|------|--------|
+| 组件 | 二进制 / 规则 | 配置 | 服务名 |
+|------|---------------|------|--------|
 | sing-box | `/etc/s-box/sing-box` | `/etc/s-box/config.json` | `singbox` |
 | SmartDNS | `/usr/sbin/smartdns` | `/etc/smartdns/smartdns.conf` | `smartdns` |
+| nft | `nft -f` | `/etc/nftables.d/messup-forward.nft` | `messup-nft` |
 
 ---
 
@@ -261,6 +271,7 @@ smartdns -v
 | sudo 相关错误 | 本方案 root 直连 `ansible_become=false`；勿强行 sudo |
 | 预检不用 `ping` 模块 | 裸 Alpine 无 Python；CI/本地用 `scripts/check-connectivity.sh`（`raw`） |
 | 某台 IP 不通 | 只 **警告并跳过**，其余主机继续部署；仅**全部**不可达才失败 |
+| `nft` Operation not permitted | LXC 缺 `CAP_NET_ADMIN`：Proxmox 勿 drop `net_admin`，重启 CT 后 `nft list tables` 应成功 |
 
 ---
 
