@@ -1,5 +1,6 @@
 ---
 # 薄封装：下发 private apply.sh + mappings，直接执行（一次性脚本，无 OpenRC）
+# nft 执行失败只警告，不中止该主机后续 play / 整批部署
 # mappings: private-config/nft/<deployment_env>/mappings.txt
 - name: Deploy nft port-forward on Alpine LXC
   hosts: lxc_nodes
@@ -24,6 +25,8 @@
       set_fact:
         _nft_map_src: "{{ private_config_temp }}/nft/{{ deployment_env }}/mappings.txt"
         _nft_apply_src: "{{ private_config_temp }}/nft/apply.sh"
+        _nft_ok: true
+        _nft_skip_reason: ""
 
     - name: Ensure apply.sh exists on control node
       stat:
@@ -39,19 +42,27 @@
       become: false
       register: _nft_map_stat
 
-    - name: Fail if private nft files missing
-      assert:
-        that:
-          - _nft_apply_stat.stat.exists
-          - _nft_apply_stat.stat.isreg
-          - _nft_map_stat.stat.exists
-          - _nft_map_stat.stat.isreg
-        fail_msg: >-
-          ❌ 缺少 private nft 文件:
-            apply.sh: {{ _nft_apply_src }}
-            mappings: {{ _nft_map_src }}
-          请确认 messup-private 已软链/checkout 为 private-config，
-          且存在 nft/apply.sh 与 nft/{{ deployment_env }}/mappings.txt
+    - name: Warn if private nft files missing (skip host nft, do not fail)
+      debug:
+        msg: >-
+          ⚠️  缺少 private nft 文件，跳过本机 nft：
+          apply.sh={{ _nft_apply_src }} exists={{ _nft_apply_stat.stat.exists | default(false) }}
+          mappings={{ _nft_map_src }} exists={{ _nft_map_stat.stat.exists | default(false) }}
+      when: >-
+        not (_nft_apply_stat.stat.exists | default(false))
+        or not (_nft_map_stat.stat.isreg | default(false))
+        or not (_nft_map_stat.stat.exists | default(false))
+        or not (_nft_apply_stat.stat.isreg | default(false))
+
+    - name: Mark skip when private files missing
+      set_fact:
+        _nft_ok: false
+        _nft_skip_reason: "private nft files missing"
+      when: >-
+        not (_nft_apply_stat.stat.exists | default(false))
+        or not (_nft_apply_stat.stat.isreg | default(false))
+        or not (_nft_map_stat.stat.exists | default(false))
+        or not (_nft_map_stat.stat.isreg | default(false))
 
   tasks:
     - name: Fail if not Alpine (apk missing)
@@ -67,20 +78,42 @@
           - iproute2
         state: present
         update_cache: true
+      when: _nft_ok | bool
+      register: _nft_pkg
+      ignore_errors: true
+
+    - name: Warn if package install failed
+      debug:
+        msg: "⚠️  安装 nftables/iptables/iproute2 失败，跳过本机 nft：{{ _nft_pkg.msg | default('unknown') }}"
+      when: _nft_ok | bool and _nft_pkg is failed
+
+    - name: Mark skip when package install failed
+      set_fact:
+        _nft_ok: false
+        _nft_skip_reason: "package install failed"
+      when: _nft_ok | bool and _nft_pkg is failed
 
     - name: Preflight nft netlink (needs CAP_NET_ADMIN)
       command: nft list tables
       register: _nft_preflight
       changed_when: false
       failed_when: false
+      when: _nft_ok | bool
 
-    - name: Fail if nft has no permission
-      fail:
+    - name: Warn if nft has no permission (skip apply, do not fail)
+      debug:
         msg: >-
-          ❌ nft 无法操作 netlink（{{ _nft_preflight.stderr | default(_nft_preflight.msg) | trim }}）。
+          ⚠️  nft 无法操作 netlink，跳过本机 apply：
+          {{ _nft_preflight.stderr | default(_nft_preflight.msg) | default('') | trim }}
           容器/LXC 需 CAP_NET_ADMIN（及通常 CAP_NET_RAW）。
-          Proxmox：勿 drop net_admin，重启 CT 后执行 nft list tables 应成功。
-      when: _nft_preflight.rc != 0
+          Proxmox：勿 drop net_admin，重启 CT 后再跑 --tags nft。
+      when: _nft_ok | bool and (_nft_preflight.rc | default(1)) != 0
+
+    - name: Mark skip when nft preflight failed
+      set_fact:
+        _nft_ok: false
+        _nft_skip_reason: "nft netlink permission denied (need CAP_NET_ADMIN)"
+      when: _nft_ok | bool and (_nft_preflight.rc | default(1)) != 0
 
     - name: Detect default route interface
       shell: |
@@ -92,20 +125,30 @@
       register: _nft_def_if
       changed_when: false
       failed_when: false
+      when: _nft_ok | bool
 
-    - name: Fail if default interface unknown and not overridden
-      fail:
-        msg: >-
-          ❌ 无法探测默认路由网卡，且未设置 nft_in_if。
-          请在 inventory 设置 nft_in_if / nft_out_if。
+    - name: Warn if default interface unknown and not overridden
+      debug:
+        msg: "⚠️  无法探测默认路由网卡且未设置 nft_in_if，跳过本机 nft。"
       when: >-
-        (nft_in_if | default('') | length == 0)
+        _nft_ok | bool
+        and (nft_in_if | default('') | length == 0)
+        and (_nft_def_if.stdout | default('') | trim | length == 0)
+
+    - name: Mark skip when interface unknown
+      set_fact:
+        _nft_ok: false
+        _nft_skip_reason: "no default route iface and nft_in_if unset"
+      when: >-
+        _nft_ok | bool
+        and (nft_in_if | default('') | length == 0)
         and (_nft_def_if.stdout | default('') | trim | length == 0)
 
     - name: Resolve nft interfaces
       set_fact:
         _nft_in_if: "{{ (nft_in_if | default('') | length > 0) | ternary(nft_in_if, _nft_def_if.stdout | trim) }}"
         _nft_out_if: "{{ (nft_out_if | default('') | length > 0) | ternary(nft_out_if, ((nft_in_if | default('') | length > 0) | ternary(nft_in_if, _nft_def_if.stdout | trim))) }}"
+      when: _nft_ok | bool
 
     - name: Show nft deploy target
       debug:
@@ -114,6 +157,7 @@
           in={{ _nft_in_if }} out={{ _nft_out_if }}
           tc={{ nft_tc_enabled | bool }} rate={{ nft_limit_rate }}
           apply={{ nft_install_dir }}/apply.sh
+      when: _nft_ok | bool
 
     - name: Ensure install directory
       file:
@@ -122,6 +166,15 @@
         mode: "0755"
         owner: root
         group: root
+      when: _nft_ok | bool
+      ignore_errors: true
+      register: _nft_dir
+
+    - name: Mark skip when install dir failed
+      set_fact:
+        _nft_ok: false
+        _nft_skip_reason: "cannot create {{ nft_install_dir }}"
+      when: _nft_ok | bool and _nft_dir is failed
 
     - name: Deploy apply.sh
       copy:
@@ -131,6 +184,8 @@
         owner: root
         group: root
       register: _nft_apply_copy
+      when: _nft_ok | bool
+      ignore_errors: true
 
     - name: Deploy mappings.txt
       copy:
@@ -140,18 +195,33 @@
         owner: root
         group: root
       register: _nft_map_copy
+      when: _nft_ok | bool
+      ignore_errors: true
+
+    - name: Mark skip when copy failed
+      set_fact:
+        _nft_ok: false
+        _nft_skip_reason: "copy apply.sh/mappings failed"
+      when: >-
+        _nft_ok | bool
+        and (
+          (_nft_apply_copy is defined and _nft_apply_copy is failed)
+          or (_nft_map_copy is defined and _nft_map_copy is failed)
+        )
 
     - name: Remove legacy OpenRC unit if present
       file:
         path: "/etc/init.d/{{ nft_service }}"
         state: absent
-      register: _nft_legacy_rm
+      failed_when: false
+      when: _nft_ok | bool
 
     - name: Disable legacy messup-nft from default runlevel
       command: "rc-update del {{ nft_service }} default"
       register: _nft_legacy_del
       changed_when: _nft_legacy_del.rc == 0
       failed_when: false
+      when: _nft_ok | bool
 
     - name: Run apply.sh (one-shot)
       command: "{{ nft_install_dir }}/apply.sh"
@@ -163,22 +233,54 @@
         MARK: "{{ nft_mark }}"
         TC_ENABLED: "{{ 'yes' if (nft_tc_enabled | bool) else 'no' }}"
       register: _nft_run
-      changed_when: true
+      changed_when: _nft_run.rc == 0
+      failed_when: false
+      when: _nft_ok | bool
+
+    - name: Warn if apply.sh failed
+      debug:
+        msg: >-
+          ⚠️  apply.sh 失败 (rc={{ _nft_run.rc | default('?') }})，不中止部署。
+          stdout: {{ _nft_run.stdout | default('') | trim }}
+          stderr: {{ _nft_run.stderr | default('') | trim }}
+      when: _nft_ok | bool and (_nft_run.rc | default(1)) != 0
+
+    - name: Mark apply failed (soft)
+      set_fact:
+        _nft_ok: false
+        _nft_skip_reason: "apply.sh failed rc={{ _nft_run.rc | default('?') }}"
+      when: _nft_ok | bool and (_nft_run.rc | default(1)) != 0
 
     - name: Verify nft table
       command: nft list table ip forward
       register: _nft_list
       changed_when: false
+      failed_when: false
+      when: _nft_ok | bool
 
-    - name: Deployment summary
+    - name: Warn if verify table failed
+      debug:
+        msg: "⚠️  nft list table ip forward 失败：{{ _nft_list.stderr | default('') | trim }}"
+      when: _nft_ok | bool and (_nft_list.rc | default(1)) != 0
+
+    - name: Deployment summary (success)
       debug:
         msg:
           - "✅ nft port-forward applied (one-shot apply.sh, no OpenRC)"
           - "  host:     {{ inventory_hostname }}"
           - "  env:      {{ deployment_env }}"
-          - "  in_if:    {{ _nft_in_if }}"
-          - "  out_if:   {{ _nft_out_if }}"
+          - "  in_if:    {{ _nft_in_if | default('n/a') }}"
+          - "  out_if:   {{ _nft_out_if | default('n/a') }}"
           - "  dir:      {{ nft_install_dir }}"
-          - "  files:    apply={{ _nft_apply_copy is changed }} map={{ _nft_map_copy is changed }}"
           - "  tc:       {{ nft_tc_enabled | bool }} ({{ nft_limit_rate }})"
-          - "  note:     重启后需再跑 Ansible --tags nft（或自行加开机钩子）"
+          - "  note:     重启后需再跑 Ansible --tags nft"
+      when: _nft_ok | bool
+
+    - name: Deployment summary (skipped / soft-fail)
+      debug:
+        msg:
+          - "⚠️  nft port-forward skipped/soft-failed (pipeline continues)"
+          - "  host:     {{ inventory_hostname }}"
+          - "  env:      {{ deployment_env | default('n/a') }}"
+          - "  reason:   {{ _nft_skip_reason | default('unknown') }}"
+      when: not (_nft_ok | bool)
