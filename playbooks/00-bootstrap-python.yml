@@ -5,6 +5,9 @@
   hosts: lxc_nodes
   gather_facts: false
   become: false
+  # 某台不可达只跳过该主机，不中止整批部署
+  ignore_unreachable: true
+  any_errors_fatal: false
   tags: [bootstrap]
 
   tasks:

@@ -22,7 +22,29 @@ fi
 
 export ANSIBLE_HOST_KEY_CHECKING="${ANSIBLE_HOST_KEY_CHECKING:-False}"
 
+# 可选：先做 raw 预检（不依赖目标机 Python）；SKIP_CONN_CHECK=1 跳过
+if [ "${SKIP_CONN_CHECK:-0}" != "1" ]; then
+  # 从参数中提取 --limit（若有）
+  LIMIT_FOR_CHECK=""
+  args=("$@")
+  for ((i = 0; i < ${#args[@]}; i++)); do
+    if [ "${args[$i]}" = "--limit" ] && [ $((i + 1)) -lt ${#args[@]} ]; then
+      LIMIT_FOR_CHECK="${args[$((i + 1))]}"
+    fi
+  done
+  LIMIT="${LIMIT_FOR_CHECK}" FAIL_IF_ALL_DOWN=1 \
+    "$ROOT/scripts/check-connectivity.sh" || exit 1
+fi
+
 echo "==> ansible-playbook playbooks/site.yml $*"
-exec ansible-playbook playbooks/site.yml \
+set +e
+ansible-playbook playbooks/site.yml \
   -e "private_config_temp=${ROOT}/private-config" \
   "$@"
+rc=$?
+set -e
+# exit 3 = 仅不可达：有 ignore_unreachable 时少见；当作警告
+if [ "$rc" -eq 0 ] || [ "$rc" -eq 3 ]; then
+  exit 0
+fi
+exit "$rc"

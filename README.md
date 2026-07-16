@@ -256,6 +256,8 @@ smartdns -v
 | sing-box check failed | 本地 `sing-box check -c config.json` |
 | 下载 404 | `singbox_version` / `smartdns_version` 与 release 是否一致 |
 | sudo 相关错误 | 本方案 root 直连 `ansible_become=false`；勿强行 sudo |
+| 预检不用 `ping` 模块 | 裸 Alpine 无 Python；CI/本地用 `scripts/check-connectivity.sh`（`raw`） |
+| 某台 IP 不通 | 只 **警告并跳过**，其余主机继续部署；仅**全部**不可达才失败 |
 
 ---
 

@@ -181,32 +181,39 @@ jobs:
           sudo apt-get install -y -qq ansible
           ansible --version
 
-      - name: Ping inventory (connectivity check)
+      # 裸 Alpine 无 Python：不能用 ping 模块；用 raw + 不可达只警告
+      - name: SSH connectivity check (raw, no Python required)
+        id: conn
         env:
           ANSIBLE_HOST_KEY_CHECKING: "False"
+          PRIVATE_KEY: /home/runner/.ssh/id_ed25519_github
+          LIMIT: ${{ steps.detect.outputs.limit }}
         run: |
           set -euo pipefail
-          LIMIT="${{ steps.detect.outputs.limit }}"
-          LIMIT_ARGS=""
-          if [ -n "${LIMIT}" ] && [ "${LIMIT}" != "<all>" ]; then
-            LIMIT_ARGS="--limit ${LIMIT}"
-          fi
-          # shellcheck disable=SC2086
-          ansible lxc_nodes -i inventory/inventory.ini \
-            --private-key ~/.ssh/id_ed25519_github \
-            -m ping ${LIMIT_ARGS} || {
-            echo "::error::无法 SSH 到目标节点。检查 ANSIBLE_SSH_KEY(id_ed25519_github)、inventory 端口与 authorized_keys"
-            exit 1
-          }
+          export PRIVATE_KEY="${HOME}/.ssh/id_ed25519_github"
+          chmod +x scripts/check-connectivity.sh
+          ./scripts/check-connectivity.sh
 
       - name: Run site playbook
+        id: play
         env:
           ANSIBLE_HOST_KEY_CHECKING: "False"
           ANSIBLE_FORCE_COLOR: "1"
         run: |
           set -euo pipefail
           EXTRA="${{ steps.detect.outputs.extra }}"
+          REACH_LIMIT="${{ steps.conn.outputs.reachable_limit }}"
+
+          # 部分主机不可达：去掉原有 --limit，改为仅可达主机（避免双重 --limit）
+          if [ -n "${REACH_LIMIT}" ]; then
+            # shellcheck disable=SC2001
+            EXTRA="$(echo " ${EXTRA} " | sed -E 's/ --limit [^ ]+//g' | sed -E 's/^ +| +$//g')"
+            EXTRA="${EXTRA} --limit ${REACH_LIMIT}"
+            echo "⚠️  仅部署可达主机: ${REACH_LIMIT}"
+          fi
+
           echo "Running: ansible-playbook playbooks/site.yml ${EXTRA:-}"
+          set +e
           # shellcheck disable=SC2086
           ansible-playbook \
             -i inventory/inventory.ini \
@@ -214,27 +221,49 @@ jobs:
             --private-key ~/.ssh/id_ed25519_github \
             -e "private_config_temp=${GITHUB_WORKSPACE}/private-config" \
             ${EXTRA}
+          rc=$?
+          set -e
+
+          # Ansible 退出码: 0 OK | 2 主机任务失败 | 3 不可达 | 4 解析错误 ...
+          # ignore_unreachable 后一般不会因不可达返回 3；若仍出现则视为警告成功
+          if [ "$rc" -eq 0 ]; then
+            echo "playbook_rc=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$rc" -eq 3 ]; then
+            echo "::warning::部分主机不可达 (ansible exit 3)，其余主机已处理；不视为流水线失败"
+            echo "playbook_rc=3" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "playbook_rc=${rc}" >> "$GITHUB_OUTPUT"
+          echo "::error::ansible-playbook 失败，退出码 ${rc}（非单纯不可达）。检查任务错误日志。"
+          exit "$rc"
 
       - name: Deploy finished
         if: success()
         run: |
-          echo "✅ Ansible deploy completed successfully"
+          echo "✅ Ansible deploy finished"
           echo "Trigger: ${{ github.event_name }}"
           echo "Tags: ${{ steps.detect.outputs.tags }}"
           echo "Limit: ${{ steps.detect.outputs.limit }}"
+          echo "Unreachable skipped: ${{ steps.conn.outputs.unreachable_hosts }}"
           {
             echo ""
             echo "### Result"
-            echo "✅ success"
+            echo "✅ finished (unreachable hosts are warnings only, not hard fail)"
+            if [ -n "${{ steps.conn.outputs.unreachable_hosts }}" ]; then
+              echo ""
+              echo "⚠️ Skipped unreachable: \`${{ steps.conn.outputs.unreachable_hosts }}\`"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Deploy failed
         if: failure()
         run: |
-          echo "::error::Ansible deploy failed. 检查 Secrets、inventory、目标机 SSH 与 private 配置路径。"
+          echo "::error::Ansible deploy failed. 若全部主机不可达：检查密钥/端口；若单机任务失败：查看 playbook 日志。"
           {
             echo ""
             echo "### Result"
-            echo "❌ failed — 检查 Secrets / inventory / SSH / private-config 路径"
+            echo "❌ failed"
           } >> "$GITHUB_STEP_SUMMARY"
           exit 1
