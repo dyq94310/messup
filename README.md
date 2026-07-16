@@ -2,7 +2,7 @@
 
 公开 Ansible 仓库：向多台 **Alpine LXC** 二进制部署 **sing-box** 与 **SmartDNS**（OpenRC 托管）。
 
-敏感配置（`config.json`、节点信息、`smartdns.conf`）存放在私有仓库 **messup-private**，由 CI / 本地流程注入。
+敏感配置（inventory、`config.json`、`smartdns.conf`）存放在私有仓库 **messup-private**，由 CI / 本地流程注入。
 
 | 仓库 | 可见性 | 内容 |
 |------|--------|------|
