@@ -46,7 +46,7 @@
 ```
 messup/
 ├── ansible.cfg
-├── group_vars/all.yml              # singbox_version / smartdns_version / 路径
+├── inventory/group_vars/all.yml    # singbox_version / smartdns_version / 路径
 ├── inventory/inventory.ini         # 主机 + deployment_env
 ├── playbooks/
 │   ├── site.yml                    # 入口：bootstrap → smartdns → singbox
@@ -174,9 +174,9 @@ cd ../messup
 ### 改 Playbook / 版本号
 
 ```bash
-# group_vars/all.yml → singbox_version / smartdns_version
+# inventory/group_vars/all.yml → singbox_version / smartdns_version
 cd messup
-vim group_vars/all.yml
+vim inventory/group_vars/all.yml
 git add -A && git commit -m "bump sing-box" && git push
 # → 自动触发 GitHub Actions 全量/对应部署
 ```
@@ -218,7 +218,7 @@ cp smartdns/rear/smartdns.conf smartdns/node-b/
 | `messup-private/smartdns/**` | `smartdns` |
 | 两仓同时改 / 公共文件 | 全量（bootstrap + 两服务） |
 | `playbooks/01-deploy-singbox.yml` | `singbox` |
-| `group_vars/all.yml` / `inventory/*` | 全量 |
+| `inventory/group_vars/all.yml` / `inventory/*` | 全量 |
 
 > 使用 `--tags singbox` 时 bootstrap 带 `always` 标签仍会执行，保证 Python 就绪。
 

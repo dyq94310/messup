@@ -106,14 +106,14 @@
             (smartdns_version not in (_installed_ver.stdout | default('')))
           }}
 
-    # 官方包名示例:
-    # https://github.com/pymumu/smartdns/releases/download/Release46.1/smartdns-46.1.x86_64-linux-all.tar.gz
-    - name: Download SmartDNS release tarball
+    # 官方二进制资产示例:
+    # https://github.com/pymumu/smartdns/releases/download/Release48.2/smartdns-x86_64
+    - name: Download SmartDNS release binary
       get_url:
         url: >-
-          https://github.com/pymumu/smartdns/releases/download/Release{{ smartdns_version }}/smartdns-{{ smartdns_version }}.{{ smartdns_pkg_arch }}-linux-all.tar.gz
-        dest: "/tmp/smartdns-{{ smartdns_version }}-{{ smartdns_pkg_arch }}.tar.gz"
-        mode: "0644"
+          https://github.com/pymumu/smartdns/releases/download/Release{{ smartdns_version }}/smartdns-{{ smartdns_pkg_arch }}
+        dest: "/tmp/smartdns-{{ smartdns_version }}-{{ smartdns_pkg_arch }}"
+        mode: "0755"
         force: true
         timeout: 120
       register: _dl
@@ -122,42 +122,9 @@
       until: _dl is succeeded
       when: _need_bin_install | bool
 
-    - name: Reset extract workspace
-      file:
-        path: "/tmp/smartdns-extract"
-        state: "{{ item }}"
-        mode: "0755"
-      loop:
-        - absent
-        - directory
-      when: _need_bin_install | bool
-
-    - name: Extract SmartDNS package
-      unarchive:
-        src: "/tmp/smartdns-{{ smartdns_version }}-{{ smartdns_pkg_arch }}.tar.gz"
-        dest: "/tmp/smartdns-extract"
-        remote_src: true
-      when: _need_bin_install | bool
-
-    - name: Locate smartdns binary in package
-      find:
-        paths: /tmp/smartdns-extract
-        patterns: smartdns
-        file_type: file
-        recurse: true
-      register: _found_bin
-      when: _need_bin_install | bool
-
-    - name: Fail if package has no smartdns binary
-      fail:
-        msg: "❌ SmartDNS tarball 中未找到名为 smartdns 的可执行文件"
-      when:
-        - _need_bin_install | bool
-        - (_found_bin.matched | default(0)) == 0
-
     - name: Install smartdns binary
       copy:
-        src: "{{ _found_bin.files[0].path }}"
+        src: "/tmp/smartdns-{{ smartdns_version }}-{{ smartdns_pkg_arch }}"
         dest: "{{ smartdns_bin }}"
         remote_src: true
         mode: "0755"
@@ -217,11 +184,8 @@
 
     - name: Cleanup temporary files
       file:
-        path: "{{ item }}"
+        path: "/tmp/smartdns-{{ smartdns_version }}-{{ smartdns_pkg_arch }}"
         state: absent
-      loop:
-        - "/tmp/smartdns-{{ smartdns_version }}-{{ smartdns_pkg_arch }}.tar.gz"
-        - "/tmp/smartdns-extract"
       when: _need_bin_install | bool
 
     - name: Read installed version

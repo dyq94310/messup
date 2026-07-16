@@ -69,6 +69,12 @@
             'armv7' if ansible_architecture in ['armv7l', 'armv7'] else
             'unknown'
           }}
+        # Alpine = musl；避免默认 glibc 包在 Alpine 上出现 "not found"(exit 127)
+        singbox_libc: >-
+          {{
+            'musl' if (ansible_os_family | default('') == 'Alpine' or ansible_pkg_mgr | default('') == 'apk')
+            else 'glibc'
+          }}
 
     - name: Fail on unknown architecture
       fail:
@@ -79,7 +85,7 @@
 
     - name: Show target architecture
       debug:
-        msg: "Host {{ inventory_hostname }} arch={{ ansible_architecture }} → {{ target_arch }}"
+        msg: "Host {{ inventory_hostname }} arch={{ ansible_architecture }} libc={{ singbox_libc }} → {{ target_arch }}"
 
     - name: Ensure install directory
       file:
@@ -106,8 +112,8 @@
     - name: Download sing-box release
       get_url:
         url: >-
-          https://github.com/SagerNet/sing-box/releases/download/v{{ singbox_version }}/sing-box-{{ singbox_version }}-linux-{{ target_arch }}.tar.gz
-        dest: "/tmp/sing-box-{{ singbox_version }}-{{ target_arch }}.tar.gz"
+          https://github.com/SagerNet/sing-box/releases/download/v{{ singbox_version }}/sing-box-{{ singbox_version }}-linux-{{ target_arch }}-{{ singbox_libc }}.tar.gz
+        dest: "/tmp/sing-box-{{ singbox_version }}-{{ target_arch }}-{{ singbox_libc }}.tar.gz"
         mode: "0644"
         force: true
         timeout: 120
@@ -119,7 +125,7 @@
 
     - name: Extract sing-box binary
       unarchive:
-        src: "/tmp/sing-box-{{ singbox_version }}-{{ target_arch }}.tar.gz"
+        src: "/tmp/sing-box-{{ singbox_version }}-{{ target_arch }}-{{ singbox_libc }}.tar.gz"
         dest: "{{ singbox_install_dir }}"
         remote_src: true
         extra_opts: ["--strip-components=1"]
@@ -194,7 +200,7 @@
 
     - name: Cleanup download archive
       file:
-        path: "/tmp/sing-box-{{ singbox_version }}-{{ target_arch }}.tar.gz"
+        path: "/tmp/sing-box-{{ singbox_version }}-{{ target_arch }}-{{ singbox_libc }}.tar.gz"
         state: absent
       when: _need_bin_install | bool
 

@@ -10,8 +10,8 @@ singbox_service: "singbox"
 
 # ---------- SmartDNS ----------
 # 对应 release tag: Release{{ smartdns_version }}
-# 包名: smartdns-{{ smartdns_version }}.{{ arch }}-linux-all.tar.gz
-smartdns_version: "46.1"
+# 官方二进制资产名: smartdns-{{ arch }}（如 smartdns-x86_64）
+smartdns_version: "48.2"
 smartdns_install_dir: "/etc/smartdns"
 smartdns_bin: "/usr/sbin/smartdns"
 smartdns_config: "{{ smartdns_install_dir }}/smartdns.conf"

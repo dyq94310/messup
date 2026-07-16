@@ -113,7 +113,7 @@ jobs:
                   NEED_SB=1 ;;
                 playbooks/02-deploy-smartdns.yml|templates/smartdns.openrc.j2)
                   NEED_SD=1 ;;
-                playbooks/site.yml|playbooks/00-bootstrap-python.yml|group_vars/*|inventory/*|ansible.cfg|.github/workflows/*)
+                playbooks/site.yml|playbooks/00-bootstrap-python.yml|inventory/*|ansible.cfg|.github/workflows/*)
                   NEED_ALL=1 ;;
                 *)
                   # 其他代码变更默认全量
