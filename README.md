@@ -6,8 +6,8 @@
 
 | 仓库 | 可见性 | 内容 |
 |------|--------|------|
-| [messup](https://github.com/dyq94310/messup) | Public | Playbook、inventory、OpenRC 模板、CI |
-| [messup-private](https://github.com/dyq94310/messup-private) | Private | 各节点配置 |
+| [messup](https://github.com/dyq94310/messup) | Public | Playbook、OpenRC 模板、CI |
+| [messup-private](https://github.com/dyq94310/messup-private) | Private | inventory、各节点 sing-box / SmartDNS 配置 |
 
 ---
 
@@ -18,13 +18,14 @@
 │  messup         │ ───────────►  │  GitHub Actions      │
 │  (public)       │               │  1. checkout messup  │
 │  playbooks/     │               │  2. checkout private │
-│  inventory/     │               │  3. ansible-playbook │
+│  templates/     │               │  3. ansible-playbook │
 └─────────────────┘               └──────────┬───────────┘
                                              │ SSH
 ┌─────────────────┐     push      ┌──────────▼───────────┐
 │  messup-private │ ──repository_ │  Alpine LXC nodes    │
 │  (private)      │   _dispatch──►│  sing-box + smartdns │
-│  singbox/<env>/ │               └──────────────────────┘
+│  inventory/     │               └──────────────────────┘
+│  singbox/<env>/ │
 │  smartdns/<env>/│
 └─────────────────┘
 ```
@@ -44,12 +45,10 @@
 ## 仓库结构
 
 ```
-messup/
-├── ansible.cfg
-├── inventory/group_vars/all.yml    # singbox_version / smartdns_version / 路径
-├── inventory/inventory.ini         # 主机 + deployment_env
+messup/                              # 公开仓（无主机清单）
+├── ansible.cfg                      # inventory → private-config/inventory/
 ├── playbooks/
-│   ├── site.yml                    # 入口：bootstrap → smartdns → singbox
+│   ├── site.yml                     # 入口：bootstrap → smartdns → singbox
 │   ├── 00-bootstrap-python.yml
 │   ├── 01-deploy-singbox.yml
 │   └── 02-deploy-smartdns.yml
@@ -57,11 +56,18 @@ messup/
 │   ├── singbox.openrc.j2
 │   └── smartdns.openrc.j2
 ├── scripts/
-│   ├── setup-local.sh              # 软链 private-config
-│   └── deploy.sh                   # 本地一键部署
+│   ├── setup-local.sh               # 软链 private-config
+│   └── deploy.sh                    # 本地一键部署
 ├── .github/workflows/
 │   └── ansible-deploy.yml
 └── README.md
+
+messup-private/                      # 私有仓（本地/CI 注入为 private-config）
+├── inventory/
+│   ├── inventory.ini                # 主机 IP/端口 + deployment_env
+│   └── group_vars/all.yml           # singbox_version / smartdns_version / 路径
+├── singbox/<env>/config.json
+└── smartdns/<env>/smartdns.conf
 ```
 
 ---
@@ -171,34 +177,31 @@ cd ../messup
 ./scripts/deploy.sh --limit 172.245.220.230
 ```
 
-### 改 Playbook / 版本号
+### 改版本号 / inventory
 
 ```bash
-# inventory/group_vars/all.yml → singbox_version / smartdns_version
-cd messup
-vim inventory/group_vars/all.yml
-git add -A && git commit -m "bump sing-box" && git push
-# → 自动触发 GitHub Actions 全量/对应部署
+# 均在 messup-private
+cd messup-private
+vim inventory/group_vars/all.yml   # singbox_version / smartdns_version
+vim inventory/inventory.ini        # 主机 IP / 端口 / deployment_env
+git add -A && git commit -m "bump sing-box / update inventory" && git push
+# → repository_dispatch → messup Ansible Deploy
 ```
 
 ### 新增节点
 
-1. **messup-private**
+全部在 **messup-private**：
 
 ```bash
 mkdir -p singbox/node-b smartdns/node-b
 cp singbox/rear/config.json singbox/node-b/
 cp smartdns/rear/smartdns.conf smartdns/node-b/
-# 编辑后 commit + push
+# inventory/inventory.ini 增加一行，例如:
+# 10.0.0.30 ansible_port=22 deployment_env=node-b
+git add -A && git commit -m "add node-b" && git push
 ```
 
-2. **messup** `inventory/inventory.ini`
-
-```ini
-10.0.0.30 ansible_port=22 deployment_env=node-b
-```
-
-3. 公钥写入新节点 `authorized_keys`，推送 messup（或本地 `./scripts/deploy.sh --limit 10.0.0.30`）。
+公钥写入新节点 `authorized_keys` 后，CI 会自动部署（或本地 `./scripts/deploy.sh --limit 10.0.0.30`）。
 
 ---
 
@@ -216,9 +219,9 @@ cp smartdns/rear/smartdns.conf smartdns/node-b/
 |----------|-----------|
 | `messup-private/singbox/**` | `singbox`（含 bootstrap） |
 | `messup-private/smartdns/**` | `smartdns` |
+| `messup-private/inventory/**` | 全量 |
 | 两仓同时改 / 公共文件 | 全量（bootstrap + 两服务） |
 | `playbooks/01-deploy-singbox.yml` | `singbox` |
-| `inventory/group_vars/all.yml` / `inventory/*` | 全量 |
 
 > 使用 `--tags singbox` 时 bootstrap 带 `always` 标签仍会执行，保证 Python 就绪。
 
@@ -263,8 +266,9 @@ smartdns -v
 
 ## 安全建议
 
-- 公开仓 **禁止** 提交 `private-config/`、节点密码、Token
+- 公开仓 **禁止** 提交 `private-config/`、inventory、节点密码、Token
+- 主机清单（IP/端口）与版本变量均在 **messup-private/inventory/**
 - 本方案为省事复用一把 `id_ed25519_github`；若泄露需同时轮换 LXC 与 private Deploy Key
 - 定期轮换 PAT 与 SSH 密钥
-- inventory 若含敏感信息，可改为 Secret 动态生成 inventory
+- 注意：旧公开提交历史中仍可能含曾泄露的 inventory，必要时轮换 SSH 端口
 - 配置文件权限：sing-box `0600`，smartdns `0644`

@@ -20,6 +20,11 @@ if [ ! -d private-config/singbox ]; then
   exit 1
 fi
 
+if [ ! -f private-config/inventory/inventory.ini ]; then
+  echo "❌ private-config/inventory/inventory.ini 不可用（主机清单在私有仓）"
+  exit 1
+fi
+
 export ANSIBLE_HOST_KEY_CHECKING="${ANSIBLE_HOST_KEY_CHECKING:-False}"
 
 # 可选：先做 raw 预检（不依赖目标机 Python）；SKIP_CONN_CHECK=1 跳过

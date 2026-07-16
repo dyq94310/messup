@@ -11,7 +11,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-INVENTORY="${INVENTORY:-inventory/inventory.ini}"
+INVENTORY="${INVENTORY:-private-config/inventory/inventory.ini}"
 PRIVATE_KEY="${PRIVATE_KEY:-${ANSIBLE_PRIVATE_KEY:-$HOME/.ssh/id_ed25519_github}}"
 GROUP="${GROUP:-lxc_nodes}"
 LIMIT="${LIMIT:-}"
