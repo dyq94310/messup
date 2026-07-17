@@ -1,12 +1,16 @@
 # messup
 
-公开 Ansible 仓库：向多台 **Alpine LXC** 部署 **sing-box**、**SmartDNS** 与 **nft 端口转发**（OpenRC 托管）。
+公开 Ansible 仓库：向多台 **Alpine / Debian LXC** 部署 **sing-box**、**SmartDNS** 与 **nft 端口转发**。
+
+- **Alpine**：OpenRC；sing-box 使用 **musl** 二进制  
+- **Debian/Ubuntu**：systemd；sing-box 使用 **glibc** 二进制  
+- 私有配置仍按 `deployment_env` 映射，**不按 OS 拆分**
 
 敏感配置（inventory、`config.json`、`smartdns.conf`、`nft/mappings.txt`）存放在私有仓库 **messup-private**，由 CI / 本地流程注入。
 
 | 仓库 | 可见性 | 内容 |
 |------|--------|------|
-| [messup](https://github.com/dyq94310/messup) | Public | Playbook、OpenRC 模板、CI |
+| [messup](https://github.com/dyq94310/messup) | Public | Playbook、OpenRC/systemd 模板、CI |
 | [messup-private](https://github.com/dyq94310/messup-private) | Private | inventory、sing-box / SmartDNS / nft mappings |
 
 ---
@@ -22,7 +26,7 @@
 └─────────────────┘               └──────────┬───────────┘
                                              │ SSH
 ┌─────────────────┐     push      ┌──────────▼───────────┐
-│  messup-private │ ──repository_ │  Alpine LXC nodes    │
+│  messup-private │ ──repository_ │  Alpine/Debian LXC   │
 │  (private)      │   _dispatch──►│  sing-box/smartdns/nft│
 │  inventory/     │               └──────────────────────┘
 │  singbox/<env>/ │
@@ -39,6 +43,7 @@
 | `deployment_env=pre\|ix` | 对应 `nft/<env>/mappings.txt`（及可选 singbox/smartdns） |
 
 - 架构自动识别：`x86_64→amd64` / `aarch64→arm64`（sing-box）；SmartDNS 使用 `x86_64` / `aarch64` 官方包名
+- OS 自动识别：Alpine → OpenRC + musl；Debian/Ubuntu → systemd + glibc（facts，无需 inventory 手写）
 - 仅配置变更时只重启服务；版本号变化时才重新下载二进制
 
 ---
@@ -55,9 +60,10 @@ messup/                              # 公开仓（无主机清单）
 │   ├── 02-deploy-smartdns.yml
 │   └── 03-deploy-nft.yml
 ├── templates/
-│   ├── singbox.openrc.j2
-│   ├── smartdns.openrc.j2
-
+│   ├── singbox.openrc.j2 / singbox.service.j2
+│   ├── smartdns.openrc.j2 / smartdns.service.j2
+│   ├── messup-nft.openrc.j2 / messup-nft.service.j2
+│   └── messup-nft.env.j2
 ├── scripts/
 │   ├── setup-local.sh               # 软链 private-config
 │   └── deploy.sh                    # 本地一键部署
@@ -239,10 +245,10 @@ git add -A && git commit -m "add node-b" && git push
 | 目的 | 做法 |
 |------|------|
 | 改配置并生效 | 改 private 配置 → push（或本地 `deploy.sh`）→ 对应 tags 部署；**文件内容有变更** 时 handler 会 restart |
-| 只重启、不改配置 | SSH 到节点用 OpenRC，或本机 Ansible ad-hoc（见下） |
+| 只重启、不改配置 | SSH 用 OpenRC / systemctl，或本机 Ansible ad-hoc（见下） |
 | 只动一台 | SSH 该机，或 `--limit <IP>` |
 
-> 配置未变时再跑 playbook **通常不会**强制重启（只保证 `started`）。**没有**单独的「强制 restart」CI；纯重启用 OpenRC / ad-hoc 即可。
+> 配置未变时再跑 playbook **通常不会**强制重启（只保证 `started`）。**没有**单独的「强制 restart」CI；纯重启用节点上的 init 命令 / ad-hoc 即可。
 
 ### 改配置触发（推荐日常变更）
 
@@ -260,13 +266,20 @@ git add -A && git commit -m "update rear" && git push
 SSH 到目标机：
 
 ```bash
+# Alpine (OpenRC)
 rc-service singbox restart|status|stop
 rc-service smartdns restart|status|stop
 rc-service messup-nft restart|status   # oneshot：restart = 再跑 apply.sh
 rc-update show default
+
+# Debian/Ubuntu (systemd)
+systemctl restart|status|stop singbox
+systemctl restart|status|stop smartdns
+systemctl restart|status messup-nft    # oneshot：restart = 再跑 apply.sh
+systemctl is-enabled singbox smartdns messup-nft
 ```
 
-本机（控制机，inventory 已就绪）：
+本机（控制机，inventory 已就绪；两种 OS 通用）：
 
 ```bash
 ansible lxc_nodes -m service -a "name=singbox state=restarted"
@@ -283,7 +296,7 @@ sing-box version
 sing-box check -c /etc/s-box/config.json
 smartdns -v
 nft list table ip forward
-# 手动 apply（一般用 rc-service messup-nft restart）
+# 手动 apply：rc-service messup-nft restart  或  systemctl restart messup-nft
 # IN_IF=eth0 OUT_IF=eth0 CFG=/etc/messup-nft/mappings.txt /etc/messup-nft/apply.sh
 ```
 
@@ -291,9 +304,9 @@ nft list table ip forward
 
 | 组件 | 二进制 / 规则 | 配置 | 服务名 |
 |------|---------------|------|--------|
-| sing-box | `/etc/s-box/sing-box` | `/etc/s-box/config.json` | `singbox` |
+| sing-box | `/etc/s-box/sing-box` | `/etc/s-box/config.json` | `singbox`（OpenRC 或 systemd） |
 | SmartDNS | `/usr/sbin/smartdns` | `/etc/smartdns/smartdns.conf` | `smartdns` |
-| nft | `/etc/messup-nft/apply.sh` | `/etc/messup-nft/mappings.txt` + `env` | `messup-nft`（OpenRC oneshot，开机自恢复） |
+| nft | `/etc/messup-nft/apply.sh` | `/etc/messup-nft/mappings.txt` + `env` | `messup-nft`（oneshot，开机自恢复） |
 
 ---
 
@@ -308,9 +321,11 @@ nft list table ip forward
 | sing-box check failed | 本地 `sing-box check -c config.json` |
 | 下载 404 | `singbox_version` / `smartdns_version` 与 release 是否一致 |
 | sudo 相关错误 | 本方案 root 直连 `ansible_become=false`；勿强行 sudo |
-| 预检不用 `ping` 模块 | 裸 Alpine 无 Python；CI/本地用 `scripts/check-connectivity.sh`（`raw`） |
+| 预检不用 `ping` 模块 | 裸 Alpine/最小 Debian 可能无 Python；CI/本地用 `scripts/check-connectivity.sh`（`raw`） |
 | 某台 IP 不通 | 只 **警告并跳过**，其余主机继续部署；仅**全部**不可达才失败 |
 | `nft` Operation not permitted | LXC 缺 `CAP_NET_ADMIN`：Proxmox 勿 drop `net_admin`，重启 CT 后 `nft list tables` 应成功 |
+| Debian 服务未起来 | 查 `systemctl status singbox` / `journalctl -u singbox -n 50`；确认 unit 在 `/etc/systemd/system/` |
+| sing-box 下载 404 / 无法执行 | Alpine 应用 musl 包、Debian 用 glibc；确认 `singbox_version` 与 release 资产名一致 |
 
 ---
 

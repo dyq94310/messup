@@ -1,8 +1,9 @@
 ---
-# 薄封装：下发 private apply.sh + mappings + OpenRC oneshot（开机自恢复）
+# 薄封装：下发 private apply.sh + mappings + OpenRC/systemd oneshot（开机自恢复）
+# 支持 Alpine (OpenRC) 与 Debian/Ubuntu (systemd)
 # nft 执行失败只警告，不中止该主机后续 play / 整批部署
 # mappings: private-config/nft/<deployment_env>/mappings.txt
-- name: Deploy nft port-forward on Alpine LXC
+- name: Deploy nft port-forward on LXC
   hosts: lxc_nodes
   become: false
   gather_facts: true
@@ -65,10 +66,29 @@
         or not (_nft_map_stat.stat.isreg | default(false))
 
   tasks:
-    - name: Fail if not Alpine (apk missing)
-      fail:
-        msg: "❌ {{ inventory_hostname }} 不是 Alpine（未找到 apk）。当前方案仅支持 Alpine LXC。"
-      when: ansible_pkg_mgr is defined and ansible_pkg_mgr != 'apk'
+    - name: Detect OS / init
+      set_fact:
+        _is_alpine: "{{ (ansible_os_family | default('')) == 'Alpine' or (ansible_pkg_mgr | default('')) == 'apk' }}"
+        _is_debian: "{{ (ansible_os_family | default('')) in ['Debian', 'Ubuntu'] or (ansible_pkg_mgr | default('')) == 'apt' }}"
+      when: _nft_ok | bool
+
+    - name: Resolve init system
+      set_fact:
+        _init: "{{ 'openrc' if (_is_alpine | bool) else ('systemd' if (_is_debian | bool) else 'unknown') }}"
+      when: _nft_ok | bool
+
+    - name: Warn if unsupported OS (skip nft, do not fail host)
+      debug:
+        msg: >-
+          ⚠️  {{ inventory_hostname }} 不支持的系统（需要 Alpine 或 Debian/Ubuntu），跳过 nft。
+          os_family={{ ansible_os_family | default('?') }} pkg_mgr={{ ansible_pkg_mgr | default('?') }}
+      when: _nft_ok | bool and _init == 'unknown'
+
+    - name: Mark skip when unsupported OS
+      set_fact:
+        _nft_ok: false
+        _nft_skip_reason: "unsupported OS (need Alpine or Debian/Ubuntu)"
+      when: _nft_ok | bool and _init == 'unknown'
 
     - name: Install nftables, iptables, iproute2 (Alpine)
       apk:
@@ -78,7 +98,19 @@
           - iproute2
         state: present
         update_cache: true
-      when: _nft_ok | bool
+      when: _nft_ok | bool and (_is_alpine | bool)
+      register: _nft_pkg
+      ignore_errors: true
+
+    - name: Install nftables, iptables, iproute2 (Debian)
+      apt:
+        name:
+          - nftables
+          - iptables
+          - iproute2
+        state: present
+        update_cache: true
+      when: _nft_ok | bool and (_is_debian | bool)
       register: _nft_pkg
       ignore_errors: true
 
@@ -154,7 +186,7 @@
       debug:
         msg: >-
           host={{ inventory_hostname }} env={{ deployment_env }}
-          in={{ _nft_in_if }} out={{ _nft_out_if }}
+          init={{ _init }} in={{ _nft_in_if }} out={{ _nft_out_if }}
           tc={{ nft_tc_enabled | bool }} rate={{ nft_limit_rate }}
           apply={{ nft_install_dir }}/apply.sh
       when: _nft_ok | bool
@@ -209,7 +241,7 @@
           or (_nft_map_copy is defined and _nft_map_copy is failed)
         )
 
-    - name: Deploy env for apply.sh / OpenRC
+    - name: Deploy env for apply.sh / service
       template:
         src: "{{ playbook_dir }}/../templates/messup-nft.env.j2"
         dest: "{{ nft_install_dir }}/env"
@@ -228,13 +260,33 @@
         owner: root
         group: root
       register: _nft_unit
-      when: _nft_ok | bool
+      when: _nft_ok | bool and _init == 'openrc'
+      ignore_errors: true
+
+    - name: Deploy systemd service unit
+      template:
+        src: "{{ playbook_dir }}/../templates/messup-nft.service.j2"
+        dest: "/etc/systemd/system/{{ nft_service }}.service"
+        mode: "0644"
+        owner: root
+        group: root
+      register: _nft_unit
+      when: _nft_ok | bool and _init == 'systemd'
+      ignore_errors: true
+
+    - name: Reload systemd after unit change
+      systemd:
+        daemon_reload: true
+      when: >-
+        _nft_ok | bool
+        and _init == 'systemd'
+        and (_nft_unit is defined and _nft_unit is changed and _nft_unit is not failed)
       ignore_errors: true
 
     - name: Mark skip when env/unit deploy failed
       set_fact:
         _nft_ok: false
-        _nft_skip_reason: "deploy env/OpenRC unit failed"
+        _nft_skip_reason: "deploy env/service unit failed"
       when: >-
         _nft_ok | bool
         and (
@@ -242,16 +294,24 @@
           or (_nft_unit is defined and _nft_unit is failed)
         )
 
-    - name: Enable messup-nft at default runlevel
+    - name: Enable messup-nft (OpenRC default runlevel)
       service:
         name: "{{ nft_service }}"
         enabled: true
         runlevel: default
       register: _nft_enable
-      when: _nft_ok | bool
+      when: _nft_ok | bool and _init == 'openrc'
       ignore_errors: true
 
-    - name: Apply via OpenRC (restart = re-run oneshot apply.sh)
+    - name: Enable messup-nft (systemd)
+      service:
+        name: "{{ nft_service }}"
+        enabled: true
+      register: _nft_enable
+      when: _nft_ok | bool and _init == 'systemd'
+      ignore_errors: true
+
+    - name: Apply via service (restart = re-run oneshot apply.sh)
       service:
         name: "{{ nft_service }}"
         state: restarted
@@ -259,10 +319,10 @@
       when: _nft_ok | bool
       ignore_errors: true
 
-    - name: Warn if OpenRC apply failed
+    - name: Warn if service apply failed
       debug:
         msg: >-
-          ⚠️  rc-service {{ nft_service }} restart 失败，不中止部署。
+          ⚠️  service {{ nft_service }} enable/restart 失败，不中止部署。
           {{ _nft_run.msg | default('') }}
           stdout: {{ _nft_run.stdout | default('') | trim }}
           stderr: {{ _nft_run.stderr | default('') | trim }}
@@ -276,7 +336,7 @@
     - name: Mark apply failed (soft)
       set_fact:
         _nft_ok: false
-        _nft_skip_reason: "OpenRC enable/restart failed"
+        _nft_skip_reason: "service enable/restart failed"
       when: >-
         _nft_ok | bool
         and (
@@ -302,26 +362,34 @@
         _nft_skip_reason: "nft list table ip forward failed after apply"
       when: _nft_ok | bool and (_nft_list.rc | default(1)) != 0
 
-    - name: Check OpenRC service status
+    - name: Check service status (OpenRC)
       command: "rc-service {{ nft_service }} status"
       register: _nft_svc_status
       changed_when: false
       failed_when: false
-      when: _nft_ok | bool
+      when: _nft_ok | bool and _init == 'openrc'
+
+    - name: Check service status (systemd)
+      command: "systemctl is-active {{ nft_service }}"
+      register: _nft_svc_status
+      changed_when: false
+      failed_when: false
+      when: _nft_ok | bool and _init == 'systemd'
 
     - name: Deployment summary (success)
       debug:
         msg:
-          - "✅ nft port-forward applied (OpenRC oneshot, reboot-safe)"
+          - "✅ nft port-forward applied (oneshot, reboot-safe)"
           - "  host:     {{ inventory_hostname }}"
           - "  env:      {{ deployment_env }}"
+          - "  os/init:  {{ ansible_os_family | default('?') }} / {{ _init }}"
           - "  in_if:    {{ _nft_in_if | default('n/a') }}"
           - "  out_if:   {{ _nft_out_if | default('n/a') }}"
           - "  dir:      {{ nft_install_dir }}"
           - "  service:  {{ nft_service }}"
           - "  status:   {{ _nft_svc_status.stdout | default('n/a') | trim }}"
           - "  tc:       {{ nft_tc_enabled | bool }} ({{ nft_limit_rate }})"
-          - "  note:     重启后由 OpenRC 自动 apply，无需再跑 Ansible"
+          - "  note:     重启后由 {{ _init }} 自动 apply，无需再跑 Ansible"
       when: _nft_ok | bool
 
     - name: Deployment summary (skipped / soft-fail)

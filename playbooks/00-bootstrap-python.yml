@@ -1,7 +1,7 @@
 ---
-# Bootstrap：为最小化 Alpine LXC 安装 Python3（Ansible 模块依赖）
+# Bootstrap：为最小化 Alpine/Debian LXC 安装 Python3（Ansible 模块依赖）
 # 使用 raw 模块，无需目标机已有 Python
-- name: Bootstrap Python on Alpine LXC
+- name: Bootstrap Python on LXC
   hosts: lxc_nodes
   gather_facts: false
   become: false

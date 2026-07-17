@@ -1,0 +1,16 @@
+# Managed by Ansible — do not edit manually
+[Unit]
+Description=sing-box proxy
+After=network-online.target smartdns.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStartPre={{ singbox_bin }} check -c {{ singbox_config }}
+ExecStart={{ singbox_bin }} run -c {{ singbox_config }}
+Restart=on-failure
+RestartSec=2
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

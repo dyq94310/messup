@@ -1,0 +1,16 @@
+# Managed by Ansible — do not edit manually
+[Unit]
+Description=SmartDNS
+After=network-online.target
+Wants=network-online.target
+Before=singbox.service
+
+[Service]
+Type=simple
+ExecStart={{ smartdns_bin }} -c {{ smartdns_config }} -f
+Restart=on-failure
+RestartSec=2
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

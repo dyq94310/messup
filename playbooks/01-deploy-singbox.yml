@@ -1,10 +1,10 @@
 ---
-# 部署 / 更新 Sing-box（二进制 + OpenRC + 按节点私有配置）
-- name: Deploy sing-box on Alpine LXC
+# 部署 / 更新 Sing-box（二进制 + OpenRC/systemd + 按节点私有配置）
+# 支持 Alpine (OpenRC/musl) 与 Debian/Ubuntu (systemd/glibc)
+- name: Deploy sing-box on LXC
   hosts: lxc_nodes
   become: false
   gather_facts: true
-  # 某台不可达只跳过该主机，不中止整批部署
   ignore_unreachable: true
   any_errors_fatal: false
   tags: [singbox, proxy]
@@ -45,10 +45,21 @@
             4) CI 是否设置 -e private_config_temp=...
 
   tasks:
-    - name: Fail if not Alpine (apk missing)
+    - name: Detect OS / init
+      set_fact:
+        _is_alpine: "{{ (ansible_os_family | default('')) == 'Alpine' or (ansible_pkg_mgr | default('')) == 'apk' }}"
+        _is_debian: "{{ (ansible_os_family | default('')) in ['Debian', 'Ubuntu'] or (ansible_pkg_mgr | default('')) == 'apt' }}"
+
+    - name: Resolve init system
+      set_fact:
+        _init: "{{ 'openrc' if (_is_alpine | bool) else ('systemd' if (_is_debian | bool) else 'unknown') }}"
+
+    - name: Fail on unsupported OS
       fail:
-        msg: "❌ {{ inventory_hostname }} 不是 Alpine（未找到 apk）。当前方案仅支持 Alpine LXC。"
-      when: ansible_pkg_mgr is defined and ansible_pkg_mgr != 'apk'
+        msg: >-
+          ❌ {{ inventory_hostname }} 不支持的系统（需要 Alpine 或 Debian/Ubuntu）。
+          os_family={{ ansible_os_family | default('?') }} pkg_mgr={{ ansible_pkg_mgr | default('?') }}
+      when: _init == 'unknown'
 
     - name: Install runtime dependencies (Alpine)
       apk:
@@ -59,6 +70,17 @@
           - openrc
         state: present
         update_cache: true
+      when: _is_alpine | bool
+
+    - name: Install runtime dependencies (Debian)
+      apt:
+        name:
+          - curl
+          - tar
+          - ca-certificates
+        state: present
+        update_cache: true
+      when: _is_debian | bool
 
     - name: Detect CPU architecture (sing-box release naming)
       set_fact:
@@ -69,12 +91,8 @@
             'armv7' if ansible_architecture in ['armv7l', 'armv7'] else
             'unknown'
           }}
-        # Alpine = musl；避免默认 glibc 包在 Alpine 上出现 "not found"(exit 127)
-        singbox_libc: >-
-          {{
-            'musl' if (ansible_os_family | default('') == 'Alpine' or ansible_pkg_mgr | default('') == 'apk')
-            else 'glibc'
-          }}
+        # Alpine = musl；Debian/Ubuntu = glibc
+        singbox_libc: "{{ 'musl' if (_is_alpine | bool) else 'glibc' }}"
 
     - name: Fail on unknown architecture
       fail:
@@ -85,7 +103,10 @@
 
     - name: Show target architecture
       debug:
-        msg: "Host {{ inventory_hostname }} arch={{ ansible_architecture }} libc={{ singbox_libc }} → {{ target_arch }}"
+        msg: >-
+          Host {{ inventory_hostname }} os={{ ansible_os_family | default('?') }}
+          init={{ _init }} arch={{ ansible_architecture }}
+          libc={{ singbox_libc }} → {{ target_arch }}
 
     - name: Ensure install directory
       file:
@@ -186,12 +207,36 @@
         owner: root
         group: root
       notify: Restart singbox
+      when: _init == 'openrc'
 
-    - name: Enable singbox at default runlevel
+    - name: Deploy systemd service unit
+      template:
+        src: "{{ playbook_dir }}/../templates/singbox.service.j2"
+        dest: "/etc/systemd/system/{{ singbox_service }}.service"
+        mode: "0644"
+        owner: root
+        group: root
+      notify: Restart singbox
+      when: _init == 'systemd'
+      register: _sb_unit_sys
+
+    - name: Reload systemd after unit change
+      systemd:
+        daemon_reload: true
+      when: _init == 'systemd' and (_sb_unit_sys is defined and _sb_unit_sys is changed)
+
+    - name: Enable singbox (OpenRC default runlevel)
       service:
         name: "{{ singbox_service }}"
         enabled: true
         runlevel: default
+      when: _init == 'openrc'
+
+    - name: Enable singbox (systemd)
+      service:
+        name: "{{ singbox_service }}"
+        enabled: true
+      when: _init == 'systemd'
 
     - name: Ensure singbox is started
       service:
@@ -210,11 +255,19 @@
       changed_when: false
       failed_when: false
 
-    - name: Check service status
+    - name: Check service status (OpenRC)
       command: "rc-service {{ singbox_service }} status"
       register: _svc_status
       changed_when: false
       failed_when: false
+      when: _init == 'openrc'
+
+    - name: Check service status (systemd)
+      command: "systemctl is-active {{ singbox_service }}"
+      register: _svc_status
+      changed_when: false
+      failed_when: false
+      when: _init == 'systemd'
 
     - name: Deployment summary
       debug:
@@ -222,8 +275,9 @@
           - "✅ sing-box deployed"
           - "  host:     {{ inventory_hostname }}"
           - "  env:      {{ deployment_env }}"
+          - "  os/init:  {{ ansible_os_family | default('?') }} / {{ _init }}"
           - "  version:  {{ singbox_version }}"
-          - "  arch:     {{ target_arch }}"
+          - "  arch:     {{ target_arch }} ({{ singbox_libc }})"
           - "  binary:   {{ singbox_bin }}"
           - "  config:   {{ singbox_config }}"
           - "  detail:   {{ version_out.stdout_lines | default(['n/a']) | first }}"

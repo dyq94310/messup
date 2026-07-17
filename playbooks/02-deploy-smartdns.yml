@@ -1,10 +1,10 @@
 ---
-# 部署 / 更新 SmartDNS（二进制 + OpenRC + 按节点私有配置）
-- name: Deploy SmartDNS on Alpine LXC
+# 部署 / 更新 SmartDNS（二进制 + OpenRC/systemd + 按节点私有配置）
+# 支持 Alpine (OpenRC) 与 Debian/Ubuntu (systemd)
+- name: Deploy SmartDNS on LXC
   hosts: lxc_nodes
   become: false
   gather_facts: true
-  # 某台不可达只跳过该主机，不中止整批部署
   ignore_unreachable: true
   any_errors_fatal: false
   tags: [smartdns, dns]
@@ -44,10 +44,21 @@
             3) inventory 中 deployment_env 与目录名一致
 
   tasks:
-    - name: Fail if not Alpine (apk missing)
+    - name: Detect OS / init
+      set_fact:
+        _is_alpine: "{{ (ansible_os_family | default('')) == 'Alpine' or (ansible_pkg_mgr | default('')) == 'apk' }}"
+        _is_debian: "{{ (ansible_os_family | default('')) in ['Debian', 'Ubuntu'] or (ansible_pkg_mgr | default('')) == 'apt' }}"
+
+    - name: Resolve init system
+      set_fact:
+        _init: "{{ 'openrc' if (_is_alpine | bool) else ('systemd' if (_is_debian | bool) else 'unknown') }}"
+
+    - name: Fail on unsupported OS
       fail:
-        msg: "❌ {{ inventory_hostname }} 不是 Alpine（未找到 apk）。当前方案仅支持 Alpine LXC。"
-      when: ansible_pkg_mgr is defined and ansible_pkg_mgr != 'apk'
+        msg: >-
+          ❌ {{ inventory_hostname }} 不支持的系统（需要 Alpine 或 Debian/Ubuntu）。
+          os_family={{ ansible_os_family | default('?') }} pkg_mgr={{ ansible_pkg_mgr | default('?') }}
+      when: _init == 'unknown'
 
     - name: Install runtime dependencies (Alpine)
       apk:
@@ -58,6 +69,17 @@
           - openrc
         state: present
         update_cache: true
+      when: _is_alpine | bool
+
+    - name: Install runtime dependencies (Debian)
+      apt:
+        name:
+          - curl
+          - tar
+          - ca-certificates
+        state: present
+        update_cache: true
+      when: _is_debian | bool
 
     - name: Detect CPU architecture (SmartDNS release naming)
       set_fact:
@@ -78,7 +100,9 @@
 
     - name: Show target architecture
       debug:
-        msg: "Host {{ inventory_hostname }} arch={{ ansible_architecture }} → {{ smartdns_pkg_arch }}"
+        msg: >-
+          Host {{ inventory_hostname }} os={{ ansible_os_family | default('?') }}
+          init={{ _init }} arch={{ ansible_architecture }} → {{ smartdns_pkg_arch }}
 
     - name: Ensure install and runtime directories
       file:
@@ -170,12 +194,36 @@
         owner: root
         group: root
       notify: Restart smartdns
+      when: _init == 'openrc'
 
-    - name: Enable smartdns at default runlevel
+    - name: Deploy systemd service unit
+      template:
+        src: "{{ playbook_dir }}/../templates/smartdns.service.j2"
+        dest: "/etc/systemd/system/{{ smartdns_service }}.service"
+        mode: "0644"
+        owner: root
+        group: root
+      notify: Restart smartdns
+      when: _init == 'systemd'
+      register: _sd_unit_sys
+
+    - name: Reload systemd after unit change
+      systemd:
+        daemon_reload: true
+      when: _init == 'systemd' and (_sd_unit_sys is defined and _sd_unit_sys is changed)
+
+    - name: Enable smartdns (OpenRC default runlevel)
       service:
         name: "{{ smartdns_service }}"
         enabled: true
         runlevel: default
+      when: _init == 'openrc'
+
+    - name: Enable smartdns (systemd)
+      service:
+        name: "{{ smartdns_service }}"
+        enabled: true
+      when: _init == 'systemd'
 
     - name: Ensure smartdns is started
       service:
@@ -194,11 +242,19 @@
       changed_when: false
       failed_when: false
 
-    - name: Check service status
+    - name: Check service status (OpenRC)
       command: "rc-service {{ smartdns_service }} status"
       register: _svc_status
       changed_when: false
       failed_when: false
+      when: _init == 'openrc'
+
+    - name: Check service status (systemd)
+      command: "systemctl is-active {{ smartdns_service }}"
+      register: _svc_status
+      changed_when: false
+      failed_when: false
+      when: _init == 'systemd'
 
     - name: Deployment summary
       debug:
@@ -206,6 +262,7 @@
           - "✅ SmartDNS deployed"
           - "  host:     {{ inventory_hostname }}"
           - "  env:      {{ deployment_env }}"
+          - "  os/init:  {{ ansible_os_family | default('?') }} / {{ _init }}"
           - "  version:  {{ smartdns_version }}"
           - "  arch:     {{ smartdns_pkg_arch }}"
           - "  binary:   {{ smartdns_bin }}"
