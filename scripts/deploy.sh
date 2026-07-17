@@ -26,9 +26,23 @@ if [ ! -f private-config/inventory/inventory.ini ]; then
 fi
 
 export ANSIBLE_HOST_KEY_CHECKING="${ANSIBLE_HOST_KEY_CHECKING:-False}"
+# bootstrap 密码阶段禁用 ControlMaster，避免复用失败的密钥会话
+export ANSIBLE_SSH_ARGS="${ANSIBLE_SSH_ARGS:--o ControlMaster=no -o ControlPath=none -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null}"
 
 # 1) 先 SSH bootstrap：密钥优先；失败且 inventory 有 bootstrap_password 则密码装钥
 #    必须在连通性预检之前，否则新机会被误判不可达而跳过
+NEED_PW=0
+if grep -E '[[:space:]]bootstrap_password=' private-config/inventory/inventory.ini \
+  | grep -vE '^[[:space:]]*#' >/dev/null 2>&1; then
+  NEED_PW=1
+fi
+
+if [ "$NEED_PW" -eq 1 ] && ! command -v sshpass >/dev/null 2>&1; then
+  echo "❌ inventory 含 bootstrap_password，但本机无 sshpass"
+  echo "   请安装: sudo apt-get install -y sshpass"
+  exit 1
+fi
+
 echo "==> ansible-playbook playbooks/00-bootstrap-ssh.yml $*"
 set +e
 ansible-playbook playbooks/00-bootstrap-ssh.yml \
@@ -36,8 +50,14 @@ ansible-playbook playbooks/00-bootstrap-ssh.yml \
   "$@"
 bootstrap_rc=$?
 set -e
-if [ "$bootstrap_rc" -ne 0 ] && [ "$bootstrap_rc" -ne 3 ]; then
-  echo "⚠️  SSH bootstrap 部分失败 (rc=${bootstrap_rc})，继续预检/部署可达主机"
+if [ "$bootstrap_rc" -ne 0 ]; then
+  if [ "$NEED_PW" -eq 1 ]; then
+    echo "❌ SSH bootstrap 失败 (rc=${bootstrap_rc})，且存在 bootstrap_password，中止"
+    exit "$bootstrap_rc"
+  fi
+  if [ "$bootstrap_rc" -ne 3 ]; then
+    echo "⚠️  SSH bootstrap 部分失败 (rc=${bootstrap_rc})，继续预检/部署可达主机"
+  fi
 fi
 
 # 2) raw 预检（不依赖目标机 Python）；SKIP_CONN_CHECK=1 跳过

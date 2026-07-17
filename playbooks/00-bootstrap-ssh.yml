@@ -1,13 +1,15 @@
 ---
-# 首次 SSH 引导：优先密钥；密钥失败且 inventory 含 bootstrap_password 时用密码装公钥并锁定密码。
-# 控制机依赖 sshpass（CI workflow 会 apt 安装；本 playbook 也会检测并尝试补装）。
-# 用法:
-#   ansible-playbook playbooks/00-bootstrap-ssh.yml
-#   ansible-playbook playbooks/00-bootstrap-ssh.yml --limit 10.0.0.30
+# 首次 SSH 引导：优先密钥；密钥失败（或 inventory 含 bootstrap_password）时用密码装公钥。
+# 控制机依赖 sshpass（CI 会 apt 安装；本 playbook 也会检测并尝试补装）。
+#
 # inventory 示例:
 #   10.0.0.30 ansible_port=22 deployment_env=node-b bootstrap_password=面板初始密码
 # 成功后请从 inventory 删除 bootstrap_password=...
-# 控制机需 sshpass；公钥由私钥 ssh-keygen -y 导出（与 ANSIBLE_SSH_KEY / id_ed25519_github 对应）。
+#
+# 注意:
+# - 密码阶段必须禁用 ControlMaster / 私钥，否则会复用密钥探测失败的 SSH 会话或只试公钥
+# - 公钥由私钥 ssh-keygen -y 导出（与 ANSIBLE_SSH_KEY / id_ed25519_github 对应）
+
 - name: Probe key auth and classify hosts
   hosts: lxc_nodes
   gather_facts: false
@@ -17,8 +19,42 @@
   tags: [bootstrap_ssh, bootstrap, always]
   vars:
     bootstrap_ssh_privkey: "{{ ansible_ssh_private_key_file | default('~/.ssh/id_ed25519_github') | expanduser }}"
-    bootstrap_ssh_pubkey: "{{ lookup('pipe', 'ssh-keygen -y -f ' ~ bootstrap_ssh_privkey) | trim }}"
+    # 禁用 ControlMaster，避免与后续密码会话串扰
+    ansible_ssh_common_args: >-
+      -o PreferredAuthentications=publickey
+      -o PasswordAuthentication=no
+      -o StrictHostKeyChecking=no
+      -o UserKnownHostsFile=/dev/null
+      -o ConnectTimeout=12
+      -o IdentitiesOnly=yes
+      -o ControlMaster=no
+      -o ControlPath=none
   tasks:
+    - name: Derive public key from private key on control node
+      shell: ssh-keygen -y -f "{{ bootstrap_ssh_privkey }}"
+      args:
+        executable: /bin/bash
+      delegate_to: localhost
+      become: false
+      run_once: true
+      changed_when: false
+      register: pubkey_export
+      no_log: true
+
+    - name: Fail when private key cannot export public key
+      fail:
+        msg: >-
+          无法从 {{ bootstrap_ssh_privkey }} 导出公钥（ssh-keygen -y）。
+          CI 请确认 Secret ANSIBLE_SSH_KEY 为有效私钥全文。
+      run_once: true
+      when: pubkey_export.rc | default(1) != 0
+
+    - name: Store exported public key
+      set_fact:
+        bootstrap_ssh_pubkey: "{{ pubkey_export.stdout | trim }}"
+      run_once: true
+      no_log: true
+
     - name: Probe SSH with private key
       raw: echo __KEY_OK__
       args:
@@ -26,14 +62,6 @@
       register: key_probe
       changed_when: false
       failed_when: false
-      vars:
-        ansible_ssh_common_args: >-
-          -o PreferredAuthentications=publickey
-          -o PasswordAuthentication=no
-          -o StrictHostKeyChecking=no
-          -o UserKnownHostsFile=/dev/null
-          -o ConnectTimeout=12
-          -o IdentitiesOnly=yes
 
     - name: Evaluate key probe result
       set_fact:
@@ -43,14 +71,25 @@
             and ((key_probe.rc | default(1)) | int == 0)
             and ('__KEY_OK__' in (key_probe.stdout | default('')))
           }}
+        has_bootstrap_password: >-
+          {{
+            bootstrap_password is defined
+            and (bootstrap_password | string | length) > 0
+          }}
 
+    - name: Show probe status (no secrets)
+      debug:
+        msg: >-
+          {{ inventory_hostname }} key_ok={{ ssh_key_ok }}
+          has_bootstrap_password={{ has_bootstrap_password }}
+
+    # 仅密钥失败 + 有密码 → 密码装钥（密钥已通时若仍写密码，可能已 passwd -l，勿强行走密码）
     - name: Mark hosts that need password bootstrap
       group_by:
         key: needs_ssh_bootstrap
       when:
         - not (ssh_key_ok | bool)
-        - bootstrap_password is defined
-        - (bootstrap_password | string | length) > 0
+        - has_bootstrap_password | bool
 
     - name: Warn key failed without bootstrap_password
       debug:
@@ -59,38 +98,43 @@
           将跳过该主机。在 inventory 增加 bootstrap_password=... 后重新部署。
       when:
         - not (ssh_key_ok | bool)
-        - bootstrap_password is not defined or (bootstrap_password | string | length) == 0
+        - not (has_bootstrap_password | bool)
 
     - name: Remind remove bootstrap_password when key already works
       debug:
         msg: >-
-          ℹ️  {{ inventory_hostname }} 密钥已可用，请从 inventory 删除 bootstrap_password 字段
-          （缩短明文密码在私有仓中的暴露窗口）。
+          ℹ️  {{ inventory_hostname }} 密钥已可用，请从 inventory 删除 bootstrap_password。
       when:
         - ssh_key_ok | bool
-        - bootstrap_password is defined
-        - (bootstrap_password | string | length) > 0
+        - has_bootstrap_password | bool
 
 - name: Install pubkey via bootstrap_password
   hosts: needs_ssh_bootstrap
   gather_facts: false
   become: false
-  ignore_unreachable: true
+  # 密码装钥失败必须可见，不能静默跳过
+  ignore_unreachable: false
   any_errors_fatal: false
   tags: [bootstrap_ssh, bootstrap, always]
   vars:
     bootstrap_ssh_privkey: "{{ ansible_ssh_private_key_file | default('~/.ssh/id_ed25519_github') | expanduser }}"
-    bootstrap_ssh_pubkey: "{{ lookup('pipe', 'ssh-keygen -y -f ' ~ bootstrap_ssh_privkey) | trim }}"
+    # 密码阶段：只用密码，禁用公钥与 ControlMaster
     ansible_password: "{{ bootstrap_password }}"
+    ansible_ssh_private_key_file: /dev/null
     ansible_ssh_common_args: >-
       -o PreferredAuthentications=password
       -o PubkeyAuthentication=no
+      -o KbdInteractiveAuthentication=no
       -o StrictHostKeyChecking=no
       -o UserKnownHostsFile=/dev/null
       -o NumberOfPasswordPrompts=1
-      -o ConnectTimeout=12
+      -o ConnectTimeout=15
+      -o IdentitiesOnly=yes
+      -o IdentityFile=/dev/null
+      -o ControlMaster=no
+      -o ControlPath=none
+      -o ControlPersist=no
   tasks:
-    # 注意: Ansible command 模块不走 shell，「command -v」会误判失败；必须用 shell。
     - name: Check sshpass on control node
       shell: command -v sshpass
       args:
@@ -154,6 +198,23 @@
       run_once: true
       when: sshpass_recheck.rc | default(1) != 0
 
+    - name: Export public key for password install
+      shell: ssh-keygen -y -f "{{ bootstrap_ssh_privkey }}"
+      args:
+        executable: /bin/bash
+      delegate_to: localhost
+      become: false
+      run_once: true
+      changed_when: false
+      register: pubkey_for_install
+      no_log: true
+
+    - name: Fail when public key export empty
+      fail:
+        msg: 无法导出公钥，拒绝写入 authorized_keys
+      run_once: true
+      when: (pubkey_for_install.stdout | default('') | trim | length) == 0
+
     - name: Install authorized_keys with password auth
       raw: |
         set -e
@@ -161,25 +222,47 @@
         chmod 700 /root/.ssh
         touch /root/.ssh/authorized_keys
         chmod 600 /root/.ssh/authorized_keys
-        PUB='{{ bootstrap_ssh_pubkey }}'
+        PUB='{{ pubkey_for_install.stdout | trim }}'
+        if [ -z "$PUB" ]; then
+          echo __KEY_EMPTY__
+          exit 1
+        fi
         if grep -qxF "$PUB" /root/.ssh/authorized_keys 2>/dev/null; then
           echo __KEY_PRESENT__
         else
           printf '%s\n' "$PUB" >> /root/.ssh/authorized_keys
           echo __KEY_INSTALLED__
         fi
+        # 确认写入
+        if ! grep -qxF "$PUB" /root/.ssh/authorized_keys 2>/dev/null; then
+          echo __KEY_WRITE_FAILED__
+          exit 1
+        fi
       args:
         executable: /bin/sh
       register: key_install
-      no_log: true
+      # 不 no_log 整段：需要看到 __KEY_INSTALLED__ / 连接错误；密码在 ansible_password 侧
       changed_when: >-
         key_install.stdout is defined and '__KEY_INSTALLED__' in key_install.stdout
+      failed_when: >-
+        (key_install.rc | default(1) | int != 0)
+        or (key_install.stdout is not defined)
+        or (
+          '__KEY_INSTALLED__' not in key_install.stdout
+          and '__KEY_PRESENT__' not in key_install.stdout
+        )
+
+    - name: Report key install result
+      debug:
+        msg: >-
+          ✅ {{ inventory_hostname }} authorized_keys
+          {{ '已写入' if ('__KEY_INSTALLED__' in (key_install.stdout | default(''))) else '已存在' }}
 
 - name: Verify key auth after password bootstrap
   hosts: needs_ssh_bootstrap
   gather_facts: false
   become: false
-  ignore_unreachable: true
+  ignore_unreachable: false
   any_errors_fatal: false
   tags: [bootstrap_ssh, bootstrap, always]
   vars:
@@ -190,6 +273,8 @@
       -o UserKnownHostsFile=/dev/null
       -o ConnectTimeout=12
       -o IdentitiesOnly=yes
+      -o ControlMaster=no
+      -o ControlPath=none
   tasks:
     - name: Re-probe SSH with private key
       raw: echo __KEY_OK__

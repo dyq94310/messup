@@ -199,6 +199,8 @@ jobs:
         env:
           ANSIBLE_HOST_KEY_CHECKING: "False"
           ANSIBLE_FORCE_COLOR: "1"
+          # 避免 ansible.cfg 的 ControlMaster 与密码会话串扰
+          ANSIBLE_SSH_ARGS: "-o ControlMaster=no -o ControlPath=none -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
         run: |
           set -euo pipefail
           LIMIT="${{ steps.detect.outputs.limit }}"
@@ -206,6 +208,18 @@ jobs:
           if [ -n "${LIMIT}" ] && [ "${LIMIT}" != "<all>" ]; then
             EXTRA="--limit ${LIMIT}"
           fi
+
+          # 是否有主机声明了 bootstrap_password（需要密码装钥必须成功）
+          NEED_PW=0
+          if grep -E '[[:space:]]bootstrap_password=' private-config/inventory/inventory.ini \
+            | grep -vE '^[[:space:]]*#' >/dev/null 2>&1; then
+            NEED_PW=1
+            echo "Detected bootstrap_password in inventory → password install required"
+          fi
+
+          echo "pubkey fingerprint (from ANSIBLE_SSH_KEY):"
+          ssh-keygen -y -f ~/.ssh/id_ed25519_github | ssh-keygen -lf - || true
+
           echo "Running: ansible-playbook playbooks/00-bootstrap-ssh.yml ${EXTRA:-}"
           set +e
           # shellcheck disable=SC2086
@@ -218,10 +232,19 @@ jobs:
           rc=$?
           set -e
           echo "bootstrap_rc=${rc}" >> "$GITHUB_OUTPUT"
-          if [ "$rc" -eq 0 ] || [ "$rc" -eq 3 ]; then
+
+          if [ "$rc" -eq 0 ]; then
             exit 0
           fi
-          # 部分主机密码错误等：不中止，交给后续连通性过滤
+          if [ "$rc" -eq 3 ] && [ "$NEED_PW" -eq 0 ]; then
+            echo "::warning::SSH bootstrap 部分不可达 (rc=3)，无 bootstrap_password 需求，继续"
+            exit 0
+          fi
+          # 有 bootstrap_password 时装钥失败必须中止，否则会静默跳过新机
+          if [ "$NEED_PW" -eq 1 ]; then
+            echo "::error::SSH bootstrap 失败 (rc=${rc}) 且 inventory 含 bootstrap_password；公钥未可靠注入，中止部署"
+            exit "$rc"
+          fi
           echo "::warning::SSH bootstrap 非零退出 (${rc})，继续对密钥可达主机部署"
           exit 0
 
