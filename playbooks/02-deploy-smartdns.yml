@@ -10,19 +10,9 @@
   tags: [smartdns, dns]
 
   pre_tasks:
-    - name: Require deployment_env
-      assert:
-        that:
-          - deployment_env is defined
-          - deployment_env | length > 0
-        fail_msg: >-
-          ❌ Host {{ inventory_hostname }} 缺少 deployment_env。
-          请在 inventory 中设置，例如: deployment_env=rear
-        success_msg: "deployment_env={{ deployment_env }}"
-
-    - name: Resolve private config path
+    - name: Resolve private config path (shared, not per-env)
       set_fact:
-        _smartdns_cfg_src: "{{ private_config_temp }}/smartdns/{{ deployment_env }}/smartdns.conf"
+        _smartdns_cfg_src: "{{ private_config_temp }}/smartdns/smartdns.conf"
 
     - name: Ensure private config exists on control node
       stat:
@@ -37,11 +27,10 @@
           - _cfg_stat.stat.exists
           - _cfg_stat.stat.isreg
         fail_msg: >-
-          ❌ 找不到节点配置: {{ _smartdns_cfg_src }}
+          ❌ 找不到 SmartDNS 全局配置: {{ _smartdns_cfg_src }}
           请确认:
             1) messup-private 已 checkout / 软链到 private-config
-            2) 存在 smartdns/{{ deployment_env }}/smartdns.conf
-            3) inventory 中 deployment_env 与目录名一致
+            2) 存在 smartdns/smartdns.conf（所有节点共用，不按 deployment_env 分）
 
   tasks:
     - name: Detect OS / init
@@ -261,12 +250,11 @@
         msg:
           - "✅ SmartDNS deployed"
           - "  host:     {{ inventory_hostname }}"
-          - "  env:      {{ deployment_env }}"
           - "  os/init:  {{ ansible_os_family | default('?') }} / {{ _init }}"
           - "  version:  {{ smartdns_version }}"
           - "  arch:     {{ smartdns_pkg_arch }}"
           - "  binary:   {{ smartdns_bin }}"
-          - "  config:   {{ smartdns_config }}"
+          - "  config:   {{ smartdns_config }} (src=smartdns/smartdns.conf shared)"
           - "  detail:   {{ version_out.stdout | default('n/a') | trim }}"
           - "  service:  {{ _svc_status.stdout | default('n/a') | trim }}"
 

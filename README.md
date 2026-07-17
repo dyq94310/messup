@@ -30,7 +30,7 @@
 │  (private)      │   _dispatch──►│  sing-box/smartdns/nft│
 │  inventory/     │               └──────────────────────┘
 │  singbox/<env>/ │
-│  smartdns/<env>/│
+│  smartdns/      │
 │  nft/<env>/     │
 └─────────────────┘
 ```
@@ -39,8 +39,9 @@
 
 | inventory | 私有配置 |
 |-----------|----------|
-| `deployment_env=rear` | `singbox/rear/` + `smartdns/rear/` + `nft/rear/mappings.txt` |
-| `deployment_env=pre\|ix` | 对应 `nft/<env>/mappings.txt`（及可选 singbox/smartdns） |
+| `deployment_env=rear` | `singbox/rear/` + `nft/rear/mappings.txt` |
+| `deployment_env=pre\|ix` | 对应 `nft/<env>/mappings.txt`（及可选 singbox） |
+| SmartDNS（全局） | 所有节点共用 `smartdns/smartdns.conf`，不分 env |
 
 - 架构自动识别：`x86_64→amd64` / `aarch64→arm64`（sing-box）；SmartDNS 使用 `x86_64` / `aarch64` 官方包名
 - OS 自动识别：Alpine → OpenRC + musl；Debian/Ubuntu → systemd + glibc（facts，无需 inventory 手写）
@@ -76,7 +77,7 @@ messup-private/                      # 私有仓（本地/CI 注入为 private-c
 │   ├── inventory.ini
 │   └── group_vars/all.yml           # 版本号 + nft 默认参数
 ├── singbox/<env>/config.json
-├── smartdns/<env>/smartdns.conf
+├── smartdns/smartdns.conf           # 全局共用
 ├── nft/apply.sh                     # 唯一业务逻辑
 └── nft/<env>/mappings.txt           # proto lport dip dport
 ```
@@ -174,7 +175,7 @@ cd messup
 ```bash
 # 1) 改私有配置
 vim ../messup-private/singbox/rear/config.json
-vim ../messup-private/smartdns/rear/smartdns.conf
+vim ../messup-private/smartdns/smartdns.conf
 
 # 2A) 推送私有仓 → 自动 CI 部署（对应服务）
 cd ../messup-private
@@ -204,9 +205,9 @@ git add -A && git commit -m "bump sing-box / update inventory" && git push
 全部在 **messup-private**：
 
 ```bash
-mkdir -p singbox/node-b smartdns/node-b
+mkdir -p singbox/node-b nft/node-b
 cp singbox/rear/config.json singbox/node-b/
-cp smartdns/rear/smartdns.conf smartdns/node-b/
+# smartdns 全局共用 smartdns/smartdns.conf，无需按节点复制
 # inventory/inventory.ini 增加一行，例如:
 # 10.0.0.30 ansible_port=22 deployment_env=node-b
 git add -A && git commit -m "add node-b" && git push
@@ -255,7 +256,7 @@ git add -A && git commit -m "add node-b" && git push
 ```bash
 # messup-private
 vim singbox/rear/config.json      # → tags=singbox，配置变了会 Restart singbox
-vim smartdns/rear/smartdns.conf   # → tags=smartdns
+vim smartdns/smartdns.conf         # → tags=smartdns（全局共用）
 vim nft/rear/mappings.txt         # → tags=nft（每次成功部署都会 re-apply）
 git add -A && git commit -m "update rear" && git push
 # 或本地: cd messup && ./scripts/deploy.sh --tags singbox --limit <IP>

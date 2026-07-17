@@ -67,8 +67,8 @@ jobs:
             echo "::error::private-config/singbox 不存在；检查 id_ed25519_github 是否已加入 messup-private Deploy keys"
             exit 1
           }
-          test -d private-config/smartdns || {
-            echo "::error::private-config/smartdns 不存在"
+          test -f private-config/smartdns/smartdns.conf || {
+            echo "::error::private-config/smartdns/smartdns.conf 不存在（全局共用配置）"
             exit 1
           }
 
