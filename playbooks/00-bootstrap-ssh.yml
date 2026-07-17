@@ -1,5 +1,6 @@
 ---
-# 首次 SSH 引导：优先密钥；失败且 inventory 含 bootstrap_password 时用密码装公钥并锁定密码。
+# 首次 SSH 引导：优先密钥；密钥失败且 inventory 含 bootstrap_password 时用密码装公钥并锁定密码。
+# 控制机依赖 sshpass（CI workflow 会 apt 安装；本 playbook 也会检测并尝试补装）。
 # 用法:
 #   ansible-playbook playbooks/00-bootstrap-ssh.yml
 #   ansible-playbook playbooks/00-bootstrap-ssh.yml --limit 10.0.0.30
