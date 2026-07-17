@@ -234,18 +234,57 @@ git add -A && git commit -m "add node-b" && git push
 
 ---
 
-## OpenRC（目标机）
+## 重启服务
+
+| 目的 | 做法 |
+|------|------|
+| 改配置并生效 | 改 private 配置 → push（或本地 `deploy.sh`）→ 对应 tags 部署；**文件内容有变更** 时 handler 会 restart |
+| 只重启、不改配置 | SSH 到节点用 OpenRC，或本机 Ansible ad-hoc（见下） |
+| 只动一台 | SSH 该机，或 `--limit <IP>` |
+
+> 配置未变时再跑 playbook **通常不会**强制重启（只保证 `started`）。**没有**单独的「强制 restart」CI；纯重启用 OpenRC / ad-hoc 即可。
+
+### 改配置触发（推荐日常变更）
 
 ```bash
-rc-service smartdns status|restart|stop
-rc-service singbox status|restart|stop
-rc-update show default
+# messup-private
+vim singbox/rear/config.json      # → tags=singbox，配置变了会 Restart singbox
+vim smartdns/rear/smartdns.conf   # → tags=smartdns
+vim nft/rear/mappings.txt         # → tags=nft（每次成功部署都会 re-apply）
+git add -A && git commit -m "update rear" && git push
+# 或本地: cd messup && ./scripts/deploy.sh --tags singbox --limit <IP>
+```
 
+### 纯重启（最快）
+
+SSH 到目标机：
+
+```bash
+rc-service singbox restart|status|stop
+rc-service smartdns restart|status|stop
+rc-service messup-nft restart|status   # oneshot：restart = 再跑 apply.sh
+rc-update show default
+```
+
+本机（控制机，inventory 已就绪）：
+
+```bash
+ansible lxc_nodes -m service -a "name=singbox state=restarted"
+ansible lxc_nodes -m service -a "name=smartdns state=restarted"
+ansible lxc_nodes -m service -a "name=messup-nft state=restarted"
+# 单机
+ansible lxc_nodes -m service -a "name=singbox state=restarted" --limit 172.245.220.230
+```
+
+### 状态 / 校验
+
+```bash
 sing-box version
 sing-box check -c /etc/s-box/config.json
 smartdns -v
 nft list table ip forward
-# 手动重放: IN_IF=eth0 OUT_IF=eth0 CFG=/etc/messup-nft/mappings.txt /etc/messup-nft/apply.sh
+# 手动 apply（一般用 rc-service messup-nft restart）
+# IN_IF=eth0 OUT_IF=eth0 CFG=/etc/messup-nft/mappings.txt /etc/messup-nft/apply.sh
 ```
 
 安装路径：
@@ -254,7 +293,7 @@ nft list table ip forward
 |------|---------------|------|--------|
 | sing-box | `/etc/s-box/sing-box` | `/etc/s-box/config.json` | `singbox` |
 | SmartDNS | `/usr/sbin/smartdns` | `/etc/smartdns/smartdns.conf` | `smartdns` |
-| nft | `/etc/messup-nft/apply.sh`（一次性） | `/etc/messup-nft/mappings.txt` | 无（Ansible 下发后直接执行） |
+| nft | `/etc/messup-nft/apply.sh` | `/etc/messup-nft/mappings.txt` + `env` | `messup-nft`（OpenRC oneshot，开机自恢复） |
 
 ---
 
