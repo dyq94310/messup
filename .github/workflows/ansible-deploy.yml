@@ -114,7 +114,7 @@ jobs:
                     NEED_SB=1 ;;
                   playbooks/02-deploy-smartdns.yml|templates/smartdns.openrc.j2)
                     NEED_SD=1 ;;
-                  playbooks/03-deploy-nft.yml)
+                  playbooks/03-deploy-nft.yml|templates/messup-nft.openrc.j2|templates/messup-nft.env.j2)
                     NEED_NFT=1 ;;
                   playbooks/site.yml|playbooks/00-bootstrap-python.yml|ansible.cfg|.github/workflows/*)
                     NEED_ALL=1 ;;

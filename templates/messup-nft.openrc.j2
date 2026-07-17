@@ -1,0 +1,36 @@
+#!/sbin/openrc-run
+# Managed by Ansible — do not edit manually
+
+description="messup nft port-forward (oneshot apply)"
+
+depend() {
+	need net
+	after firewall
+}
+
+start() {
+	ebegin "Applying messup nft NAT"
+	if [ ! -x "{{ nft_install_dir }}/apply.sh" ]; then
+		eerror "apply.sh not found: {{ nft_install_dir }}/apply.sh"
+		eend 1
+		return 1
+	fi
+	if [ ! -f "{{ nft_install_dir }}/mappings.txt" ]; then
+		eerror "mappings not found: {{ nft_install_dir }}/mappings.txt"
+		eend 1
+		return 1
+	fi
+	# shellcheck disable=SC1091
+	[ -f "{{ nft_install_dir }}/env" ] && . "{{ nft_install_dir }}/env"
+	export IN_IF OUT_IF CFG LIMIT_RATE MARK TC_ENABLED
+	"{{ nft_install_dir }}/apply.sh"
+	eend $?
+}
+
+stop() {
+	ebegin "Removing messup nft table"
+	if nft list table ip forward >/dev/null 2>&1; then
+		nft delete table ip forward
+	fi
+	eend 0
+}
