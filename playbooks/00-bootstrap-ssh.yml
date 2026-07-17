@@ -1,0 +1,181 @@
+---
+# 首次 SSH 引导：优先密钥；失败且 inventory 含 bootstrap_password 时用密码装公钥并锁定密码。
+# 用法:
+#   ansible-playbook playbooks/00-bootstrap-ssh.yml
+#   ansible-playbook playbooks/00-bootstrap-ssh.yml --limit 10.0.0.30
+# inventory 示例:
+#   10.0.0.30 ansible_port=22 deployment_env=node-b bootstrap_password=面板初始密码
+# 成功后请从 inventory 删除 bootstrap_password=...
+# 控制机需 sshpass；公钥由私钥 ssh-keygen -y 导出（与 ANSIBLE_SSH_KEY / id_ed25519_github 对应）。
+- name: Probe key auth and classify hosts
+  hosts: lxc_nodes
+  gather_facts: false
+  become: false
+  ignore_unreachable: true
+  any_errors_fatal: false
+  tags: [bootstrap_ssh, bootstrap, always]
+  vars:
+    bootstrap_ssh_privkey: "{{ ansible_ssh_private_key_file | default('~/.ssh/id_ed25519_github') | expanduser }}"
+    bootstrap_ssh_pubkey: "{{ lookup('pipe', 'ssh-keygen -y -f ' ~ bootstrap_ssh_privkey) | trim }}"
+  tasks:
+    - name: Probe SSH with private key
+      raw: echo __KEY_OK__
+      args:
+        executable: /bin/sh
+      register: key_probe
+      changed_when: false
+      failed_when: false
+      vars:
+        ansible_ssh_common_args: >-
+          -o PreferredAuthentications=publickey
+          -o PasswordAuthentication=no
+          -o StrictHostKeyChecking=no
+          -o UserKnownHostsFile=/dev/null
+          -o ConnectTimeout=12
+          -o IdentitiesOnly=yes
+
+    - name: Evaluate key probe result
+      set_fact:
+        ssh_key_ok: >-
+          {{
+            not (key_probe.unreachable | default(false) | bool)
+            and ((key_probe.rc | default(1)) | int == 0)
+            and ('__KEY_OK__' in (key_probe.stdout | default('')))
+          }}
+
+    - name: Mark hosts that need password bootstrap
+      group_by:
+        key: needs_ssh_bootstrap
+      when:
+        - not (ssh_key_ok | bool)
+        - bootstrap_password is defined
+        - (bootstrap_password | string | length) > 0
+
+    - name: Warn key failed without bootstrap_password
+      debug:
+        msg: >-
+          ⚠️  {{ inventory_hostname }} 密钥不可用且未设置 bootstrap_password，
+          将跳过该主机。在 inventory 增加 bootstrap_password=... 后重新部署。
+      when:
+        - not (ssh_key_ok | bool)
+        - bootstrap_password is not defined or (bootstrap_password | string | length) == 0
+
+    - name: Remind remove bootstrap_password when key already works
+      debug:
+        msg: >-
+          ℹ️  {{ inventory_hostname }} 密钥已可用，请从 inventory 删除 bootstrap_password 字段
+          （缩短明文密码在私有仓中的暴露窗口）。
+      when:
+        - ssh_key_ok | bool
+        - bootstrap_password is defined
+        - (bootstrap_password | string | length) > 0
+
+- name: Install pubkey via bootstrap_password
+  hosts: needs_ssh_bootstrap
+  gather_facts: false
+  become: false
+  ignore_unreachable: true
+  any_errors_fatal: false
+  tags: [bootstrap_ssh, bootstrap, always]
+  vars:
+    bootstrap_ssh_privkey: "{{ ansible_ssh_private_key_file | default('~/.ssh/id_ed25519_github') | expanduser }}"
+    bootstrap_ssh_pubkey: "{{ lookup('pipe', 'ssh-keygen -y -f ' ~ bootstrap_ssh_privkey) | trim }}"
+    ansible_password: "{{ bootstrap_password }}"
+    ansible_ssh_common_args: >-
+      -o PreferredAuthentications=password
+      -o PubkeyAuthentication=no
+      -o StrictHostKeyChecking=no
+      -o UserKnownHostsFile=/dev/null
+      -o NumberOfPasswordPrompts=1
+      -o ConnectTimeout=12
+  tasks:
+    - name: Ensure control node has sshpass
+      command: command -v sshpass
+      delegate_to: localhost
+      become: false
+      run_once: true
+      changed_when: false
+      failed_when: false
+      register: sshpass_check
+
+    - name: Fail when sshpass missing on control node
+      fail:
+        msg: >-
+          控制机未安装 sshpass，无法用 bootstrap_password 登录。
+          Debian/Ubuntu: sudo apt-get install -y sshpass
+          Alpine: apk add sshpass
+      run_once: true
+      when: sshpass_check.rc | default(1) != 0
+
+    - name: Install authorized_keys with password auth
+      raw: |
+        set -e
+        mkdir -p /root/.ssh
+        chmod 700 /root/.ssh
+        touch /root/.ssh/authorized_keys
+        chmod 600 /root/.ssh/authorized_keys
+        PUB='{{ bootstrap_ssh_pubkey }}'
+        if grep -qxF "$PUB" /root/.ssh/authorized_keys 2>/dev/null; then
+          echo __KEY_PRESENT__
+        else
+          printf '%s\n' "$PUB" >> /root/.ssh/authorized_keys
+          echo __KEY_INSTALLED__
+        fi
+      args:
+        executable: /bin/sh
+      register: key_install
+      no_log: true
+      changed_when: >-
+        key_install.stdout is defined and '__KEY_INSTALLED__' in key_install.stdout
+
+- name: Verify key auth after password bootstrap
+  hosts: needs_ssh_bootstrap
+  gather_facts: false
+  become: false
+  ignore_unreachable: true
+  any_errors_fatal: false
+  tags: [bootstrap_ssh, bootstrap, always]
+  vars:
+    ansible_ssh_common_args: >-
+      -o PreferredAuthentications=publickey
+      -o PasswordAuthentication=no
+      -o StrictHostKeyChecking=no
+      -o UserKnownHostsFile=/dev/null
+      -o ConnectTimeout=12
+      -o IdentitiesOnly=yes
+  tasks:
+    - name: Re-probe SSH with private key
+      raw: echo __KEY_OK__
+      args:
+        executable: /bin/sh
+      register: key_verify
+      changed_when: false
+      failed_when: >-
+        (key_verify.unreachable | default(false) | bool)
+        or ((key_verify.rc | default(1)) | int != 0)
+        or ('__KEY_OK__' not in (key_verify.stdout | default('')))
+
+    - name: Confirm key login after bootstrap
+      debug:
+        msg: "✅ {{ inventory_hostname }} 密钥登录复核成功"
+
+    - name: Lock root password after key verified
+      raw: |
+        set -e
+        if command -v passwd >/dev/null 2>&1; then
+          passwd -l root 2>/dev/null || passwd -l 2>/dev/null || true
+          echo __PASSWD_LOCKED__
+        else
+          echo __PASSWD_SKIP__
+        fi
+      args:
+        executable: /bin/sh
+      register: lock_pw
+      changed_when: >-
+        lock_pw.stdout is defined and '__PASSWD_LOCKED__' in lock_pw.stdout
+
+    - name: Note bootstrap password cleanup
+      debug:
+        msg: >-
+          ✅ {{ inventory_hostname }} 公钥已就绪且已尝试 passwd -l root。
+          请从 inventory 删除 bootstrap_password 字段后提交。

@@ -55,7 +55,8 @@
 messup/                              # 公开仓（无主机清单）
 ├── ansible.cfg                      # inventory → private-config/inventory/
 ├── playbooks/
-│   ├── site.yml                     # bootstrap → smartdns → singbox → nft
+│   ├── site.yml                     # ssh bootstrap → python → smartdns → singbox → nft
+│   ├── 00-bootstrap-ssh.yml         # 密钥优先；bootstrap_password 密码装钥
 │   ├── 00-bootstrap-python.yml
 │   ├── 01-deploy-singbox.yml
 │   ├── 02-deploy-smartdns.yml
@@ -104,8 +105,18 @@ ssh-keygen -t ed25519 -C "id_ed25519_github" -f ~/.ssh/id_ed25519_github -N ""
 
 ### 2. 公钥装到 LXC + private Deploy Key
 
+**推荐（新机）**：在 **messup-private** `inventory.ini` 写临时密码，由 Ansible 自动装钥：
+
+```ini
+10.0.0.30 ansible_port=22 deployment_env=node-b bootstrap_password=面板初始密码
+```
+
+push 后 CI / 本地 `deploy.sh` 会：先试密钥 → 失败则用密码装公钥 → `passwd -l root` → 密钥复核 → 业务部署。  
+成功后**立刻**从 inventory 删掉 `bootstrap_password=...` 再 commit。控制机需 `sshpass`。
+
+**手动（可选）**：
+
 ```bash
-# 登录目标机
 ssh-copy-id -i ~/.ssh/id_ed25519_github.pub -p 22292 root@172.245.220.230
 # 或: cat ~/.ssh/id_ed25519_github.pub >> /root/.ssh/authorized_keys
 ```
@@ -168,7 +179,7 @@ cd messup
 # private-config 已在 .gitignore，不会进公开仓
 ```
 
-安装控制机依赖：`ansible`（包管理器或 pip）。
+安装控制机依赖：`ansible`、`sshpass`（新机 `bootstrap_password` 装钥需要）。
 
 ### 改配置并部署
 
@@ -208,12 +219,14 @@ git add -A && git commit -m "bump sing-box / update inventory" && git push
 mkdir -p singbox/node-b nft/node-b
 cp singbox/rear/config.json singbox/node-b/
 # smartdns 全局共用 smartdns/smartdns.conf，无需按节点复制
-# inventory/inventory.ini 增加一行，例如:
-# 10.0.0.30 ansible_port=22 deployment_env=node-b
+# inventory/inventory.ini 增加一行（新机带临时密码即可自动装钥）:
+# 10.0.0.30 ansible_port=22 deployment_env=node-b bootstrap_password=面板初始密码
 git add -A && git commit -m "add node-b" && git push
+# CI: 00-bootstrap-ssh → 连通性 → site（密钥优先，密码仅作首次回退）
+# 成功后再 commit：删除 bootstrap_password=...
 ```
 
-公钥写入新节点 `authorized_keys` 后，CI 会自动部署（或本地 `./scripts/deploy.sh --limit 10.0.0.30`）。
+本地：`./scripts/deploy.sh --limit 10.0.0.30`（需 `sshpass` + `~/.ssh/id_ed25519_github`）。
 
 ---
 
@@ -221,9 +234,11 @@ git add -A && git commit -m "add node-b" && git push
 
 | 事件 | 结果 |
 |------|------|
-| push `messup` → `main` | 拉 private → 按变更路径推断 tags → `site.yml` |
+| push `messup` → `main` | 拉 private → SSH bootstrap → 连通性 → 按 tags `site.yml` |
 | push `messup-private` → `main` | 推断 tags → `repository_dispatch` → messup 再部署 |
 | Actions 手动 Run workflow | 可填 `limit` / `tags` |
+
+CI 顺序：`00-bootstrap-ssh`（密钥 / `bootstrap_password`）→ `check-connectivity` → `site.yml`。密码任务 `no_log`，流水线日志不打印密码。
 
 **对应服务推断示例**
 
@@ -316,7 +331,8 @@ nft list table ip forward
 | 现象 | 处理 |
 |------|------|
 | `找不到节点配置` | `deployment_env` 与 private 目录名；CI `private-config` checkout |
-| SSH permission denied | `ANSIBLE_SSH_KEY`(=id_ed25519_github) 与 `authorized_keys`；端口 |
+| SSH permission denied | `ANSIBLE_SSH_KEY`(=id_ed25519_github) 与 `authorized_keys`；端口；新机可设 `bootstrap_password` |
+| bootstrap 密码登录失败 | 控制机安装 `sshpass`；密码/端口正确；inventory 未把密码写进 `ansible_password` 长期字段 |
 | private checkout 失败 | 同一公钥是否已加到 **messup-private** Deploy keys；Secret 是否私钥全文 |
 | `repository_dispatch` 失败 | PAT 权限 / `PUBLIC_REPO` 写对 |
 | sing-box check failed | 本地 `sing-box check -c config.json` |

@@ -27,9 +27,21 @@ fi
 
 export ANSIBLE_HOST_KEY_CHECKING="${ANSIBLE_HOST_KEY_CHECKING:-False}"
 
-# 可选：先做 raw 预检（不依赖目标机 Python）；SKIP_CONN_CHECK=1 跳过
+# 1) 先 SSH bootstrap：密钥优先；失败且 inventory 有 bootstrap_password 则密码装钥
+#    必须在连通性预检之前，否则新机会被误判不可达而跳过
+echo "==> ansible-playbook playbooks/00-bootstrap-ssh.yml $*"
+set +e
+ansible-playbook playbooks/00-bootstrap-ssh.yml \
+  -e "private_config_temp=${ROOT}/private-config" \
+  "$@"
+bootstrap_rc=$?
+set -e
+if [ "$bootstrap_rc" -ne 0 ] && [ "$bootstrap_rc" -ne 3 ]; then
+  echo "⚠️  SSH bootstrap 部分失败 (rc=${bootstrap_rc})，继续预检/部署可达主机"
+fi
+
+# 2) raw 预检（不依赖目标机 Python）；SKIP_CONN_CHECK=1 跳过
 if [ "${SKIP_CONN_CHECK:-0}" != "1" ]; then
-  # 从参数中提取 --limit（若有）
   LIMIT_FOR_CHECK=""
   args=("$@")
   for ((i = 0; i < ${#args[@]}; i++)); do
@@ -41,6 +53,7 @@ if [ "${SKIP_CONN_CHECK:-0}" != "1" ]; then
     "$ROOT/scripts/check-connectivity.sh" || exit 1
 fi
 
+# 3) 全量 site（内含幂等 SSH bootstrap + python + 业务）
 echo "==> ansible-playbook playbooks/site.yml $*"
 set +e
 ansible-playbook playbooks/site.yml \

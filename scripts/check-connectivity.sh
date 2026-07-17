@@ -88,7 +88,7 @@ if [ ${#UNREACHABLE[@]} -gt 0 ]; then
   echo "   → 将跳过上述节点，继续部署其他主机（不会因此中止流水线）"
   # CI 注解：警告而非 error
   for h in "${UNREACHABLE[@]}"; do
-    echo "::warning::主机 ${h} SSH 不可达，已跳过部署。检查端口/authorized_keys/网络。"
+    echo "::warning::主机 ${h} SSH 不可达，已跳过部署。检查端口/authorized_keys/网络；新机可在 inventory 设 bootstrap_password 做首次装钥。"
   done
 else
   echo "✅ 无不可达主机"

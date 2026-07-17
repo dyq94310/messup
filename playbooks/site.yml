@@ -1,5 +1,5 @@
 ---
-# 一键全量部署：Bootstrap → SmartDNS → Sing-box → nft
+# 一键全量部署：SSH bootstrap → Python → SmartDNS → Sing-box → nft
 # 用法:
 #   ansible-playbook playbooks/site.yml
 #   ansible-playbook playbooks/site.yml --limit 172.245.220.230
@@ -7,6 +7,11 @@
 #   ansible-playbook playbooks/site.yml --tags smartdns
 #   ansible-playbook playbooks/site.yml --tags nft
 #   ansible-playbook playbooks/site.yml --tags singbox,smartdns,nft
+# 新机可在 inventory 写 bootstrap_password；密钥优先，失败再用密码装公钥。
+
+- name: Import SSH bootstrap (key or bootstrap_password)
+  import_playbook: 00-bootstrap-ssh.yml
+  tags: [bootstrap_ssh, bootstrap, always]
 
 - name: Import bootstrap
   import_playbook: 00-bootstrap-python.yml

@@ -20,7 +20,7 @@ on:
         required: false
         default: ""
       tags:
-        description: "可选：Ansible tags（bootstrap,smartdns,singbox,nft），留空=自动/全部"
+        description: "可选：Ansible tags（bootstrap_ssh,bootstrap,smartdns,singbox,nft），留空=自动/全部"
         required: false
         default: ""
 
@@ -116,7 +116,7 @@ jobs:
                     NEED_SD=1 ;;
                   playbooks/03-deploy-nft.yml|templates/messup-nft.openrc.j2|templates/messup-nft.service.j2|templates/messup-nft.env.j2)
                     NEED_NFT=1 ;;
-                  playbooks/site.yml|playbooks/00-bootstrap-python.yml|ansible.cfg|.github/workflows/*)
+                  playbooks/site.yml|playbooks/00-bootstrap-ssh.yml|playbooks/00-bootstrap-python.yml|ansible.cfg|.github/workflows/*)
                     NEED_ALL=1 ;;
                   *)
                     # 其他代码变更默认全量
@@ -179,11 +179,44 @@ jobs:
           sed -i 's/^[[:space:]]*//' ~/.ssh/config
           chmod 600 ~/.ssh/config
 
-      - name: Install Ansible
+      - name: Install Ansible + sshpass
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq ansible
+          sudo apt-get install -y -qq ansible sshpass
           ansible --version
+          command -v sshpass
+
+      # 新机：inventory 的 bootstrap_password 在此装公钥（密钥优先）。须在连通性预检之前。
+      - name: Bootstrap SSH (key or bootstrap_password)
+        id: ssh_bootstrap
+        env:
+          ANSIBLE_HOST_KEY_CHECKING: "False"
+          ANSIBLE_FORCE_COLOR: "1"
+        run: |
+          set -euo pipefail
+          LIMIT="${{ steps.detect.outputs.limit }}"
+          EXTRA=""
+          if [ -n "${LIMIT}" ] && [ "${LIMIT}" != "<all>" ]; then
+            EXTRA="--limit ${LIMIT}"
+          fi
+          echo "Running: ansible-playbook playbooks/00-bootstrap-ssh.yml ${EXTRA:-}"
+          set +e
+          # shellcheck disable=SC2086
+          ansible-playbook \
+            -i private-config/inventory/inventory.ini \
+            playbooks/00-bootstrap-ssh.yml \
+            --private-key ~/.ssh/id_ed25519_github \
+            -e "private_config_temp=${GITHUB_WORKSPACE}/private-config" \
+            ${EXTRA}
+          rc=$?
+          set -e
+          echo "bootstrap_rc=${rc}" >> "$GITHUB_OUTPUT"
+          if [ "$rc" -eq 0 ] || [ "$rc" -eq 3 ]; then
+            exit 0
+          fi
+          # 部分主机密码错误等：不中止，交给后续连通性过滤
+          echo "::warning::SSH bootstrap 非零退出 (${rc})，继续对密钥可达主机部署"
+          exit 0
 
       # 裸 Alpine 无 Python：不能用 ping 模块；用 raw + 不可达只警告
       - name: SSH connectivity check (raw, no Python required)
