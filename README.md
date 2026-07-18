@@ -45,6 +45,7 @@
 
 - 架构自动识别：`x86_64→amd64` / `aarch64→arm64`（sing-box）；SmartDNS 使用 `x86_64` / `aarch64` 官方包名
 - OS 自动识别：Alpine → OpenRC + musl；Debian/Ubuntu → systemd + glibc（facts，无需 inventory 手写）
+- sing-box 证书目录默认 `/etc/cert`；inventory 必须用 `singbox_cert_source=true` 指定唯一证书源节点，新节点缺证书时由 Ansible 从源节点镜像同步
 - 仅配置变更时只重启服务；版本号变化时才重新下载二进制
 
 ---
@@ -221,6 +222,7 @@ cp singbox/rear/config.json singbox/node-b/
 # smartdns 全局共用 smartdns/smartdns.conf，无需按节点复制
 # inventory/inventory.ini 增加一行（新机带临时密码即可自动装钥）:
 # 10.0.0.30 ansible_port=22 deployment_env=node-b bootstrap_password=面板初始密码
+# 确保已有且仅有一台节点标记 singbox_cert_source=true，供新节点同步 /etc/cert
 git add -A && git commit -m "add node-b" && git push
 # CI: 00-bootstrap-ssh → 连通性 → site（密钥优先，密码仅作首次回退）
 # 成功后再 commit：删除 bootstrap_password=...
@@ -324,6 +326,17 @@ nft list table ip forward
 | SmartDNS | `/usr/sbin/smartdns` | `/etc/smartdns/smartdns.conf` | `smartdns` |
 | nft | `/etc/messup-nft/apply.sh` | `/etc/messup-nft/mappings.txt` + `env` | `messup-nft`（oneshot，开机自恢复） |
 
+### sing-box 证书同步
+
+默认维护一个证书目录 `singbox_cert_dir=/etc/cert`。多节点部署时，必须在 `inventory.ini` 的 `lxc_nodes` 中标记且只标记一台证书源节点：
+
+```ini
+172.245.220.230 ansible_port=29586 deployment_env=rear singbox_cert_source=true
+43.248.9.138 ansible_port=11780 deployment_env=ix
+```
+
+部署 sing-box 时，每台目标机会先检查本机 `/etc/cert` 是否同时包含证书文件与私钥文件；本机已有则不动，本机缺失时由 Ansible 控制机从源节点打包并镜像恢复整个目录。源节点目录不存在或没有有效证书/私钥时，playbook 会直接失败，避免新节点启动 sing-box 后反复触发 ACME 申请。
+
 ---
 
 ## 故障排查
@@ -336,6 +349,7 @@ nft list table ip forward
 | private checkout 失败 | 同一公钥是否已加到 **messup-private** Deploy keys；Secret 是否私钥全文 |
 | `repository_dispatch` 失败 | PAT 权限 / `PUBLIC_REPO` 写对 |
 | sing-box check failed | 本地 `sing-box check -c config.json` |
+| 新节点缺 sing-box 证书 | 确认 inventory 只有一台 `singbox_cert_source=true`，且该节点 `/etc/cert` 内已有证书与私钥 |
 | 下载 404 | `singbox_version` / `smartdns_version` 与 release 是否一致 |
 | sudo 相关错误 | 本方案 root 直连 `ansible_become=false`；勿强行 sudo |
 | 预检不用 `ping` 模块 | 裸 Alpine/最小 Debian 可能无 Python；CI/本地用 `scripts/check-connectivity.sh`（`raw`） |

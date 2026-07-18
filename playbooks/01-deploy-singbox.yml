@@ -208,6 +208,151 @@
         backup: true
       notify: Restart singbox
 
+    - name: Collect configured sing-box certificate source hosts
+      set_fact:
+        _singbox_cert_source_hosts: "{{ (_singbox_cert_source_hosts | default([])) + [item] }}"
+      loop: "{{ groups['lxc_nodes'] | default([]) }}"
+      when: hostvars[item].singbox_cert_source | default(false) | bool
+
+    - name: Require exactly one sing-box certificate source host
+      assert:
+        that:
+          - (_singbox_cert_source_hosts | default([]) | length) == 1
+        fail_msg: >-
+          ❌ 必须在 inventory 的 lxc_nodes 中用 singbox_cert_source=true 标记且只标记一台证书源节点。
+          当前匹配: {{ _singbox_cert_source_hosts | default([]) }}
+
+    - name: Resolve sing-box certificate source host
+      set_fact:
+        _singbox_cert_source_host: "{{ _singbox_cert_source_hosts[0] }}"
+
+    - name: Check local sing-box certificate directory
+      shell: |
+        set -eu
+        if [ ! -d "{{ singbox_cert_dir }}" ]; then
+          exit 1
+        fi
+        cert_count=$(find "{{ singbox_cert_dir }}" -type f \( -name '*.crt' -o -name '*.cer' -o -name '*.pem' \) -exec test -s {} \; -print 2>/dev/null | wc -l)
+        key_count=$(find "{{ singbox_cert_dir }}" -type f \( -name '*.key' -o -name '*key*.pem' \) -exec test -s {} \; -print 2>/dev/null | wc -l)
+        test "$cert_count" -gt 0
+        test "$key_count" -gt 0
+      args:
+        executable: /bin/sh
+      register: _local_cert_dir_check
+      changed_when: false
+      failed_when: false
+
+    - name: Check source sing-box certificate directory before sync
+      shell: |
+        set -eu
+        if [ ! -d "{{ singbox_cert_dir }}" ]; then
+          exit 1
+        fi
+        cert_count=$(find "{{ singbox_cert_dir }}" -type f \( -name '*.crt' -o -name '*.cer' -o -name '*.pem' \) -exec test -s {} \; -print 2>/dev/null | wc -l)
+        key_count=$(find "{{ singbox_cert_dir }}" -type f \( -name '*.key' -o -name '*key*.pem' \) -exec test -s {} \; -print 2>/dev/null | wc -l)
+        test "$cert_count" -gt 0
+        test "$key_count" -gt 0
+      args:
+        executable: /bin/sh
+      register: _source_cert_dir_check
+      changed_when: false
+      failed_when: false
+      delegate_to: "{{ _singbox_cert_source_host }}"
+      when: _local_cert_dir_check.rc != 0
+
+    - name: Fail if local certificate directory is missing and source has no certificates
+      fail:
+        msg: >-
+          ❌ {{ inventory_hostname }} 缺少 sing-box 证书目录 {{ singbox_cert_dir }}，
+          且源节点 {{ _singbox_cert_source_host }} 的同名目录不存在，或没有同时包含证书文件与私钥文件。
+          已中止，避免 sing-box 启动时反复触发 ACME。
+      when:
+        - _local_cert_dir_check.rc != 0
+        - _source_cert_dir_check.rc != 0
+
+    - name: Prepare local certificate cache directory
+      file:
+        path: "{{ _singbox_cert_cache_dir }}"
+        state: directory
+        mode: "0700"
+      delegate_to: localhost
+      become: false
+      when: _local_cert_dir_check.rc != 0
+
+    - name: Create certificate archive on source host
+      shell: |
+        set -eu
+        rm -f "{{ _singbox_cert_remote_archive }}"
+        tar -C "{{ singbox_cert_dir }}" -czf "{{ _singbox_cert_remote_archive }}" .
+      args:
+        executable: /bin/sh
+      changed_when: true
+      delegate_to: "{{ _singbox_cert_source_host }}"
+      when: _local_cert_dir_check.rc != 0
+
+    - name: Fetch certificate archive to control node
+      fetch:
+        src: "{{ _singbox_cert_remote_archive }}"
+        dest: "{{ _singbox_cert_local_archive }}"
+        flat: true
+      delegate_to: "{{ _singbox_cert_source_host }}"
+      when: _local_cert_dir_check.rc != 0
+
+    - name: Clear invalid local certificate directory before mirror restore
+      file:
+        path: "{{ singbox_cert_dir }}"
+        state: absent
+      when: _local_cert_dir_check.rc != 0
+
+    - name: Recreate local certificate directory before mirror restore
+      file:
+        path: "{{ singbox_cert_dir }}"
+        state: directory
+        mode: "0700"
+        owner: root
+        group: root
+      when: _local_cert_dir_check.rc != 0
+
+    - name: Mirror certificate directory from source archive
+      unarchive:
+        src: "{{ _singbox_cert_local_archive }}"
+        dest: "{{ singbox_cert_dir }}"
+        remote_src: false
+        owner: root
+        group: root
+      when: _local_cert_dir_check.rc != 0
+      notify: Restart singbox
+
+    - name: Verify mirrored certificate directory
+      shell: |
+        set -eu
+        cert_count=$(find "{{ singbox_cert_dir }}" -type f \( -name '*.crt' -o -name '*.cer' -o -name '*.pem' \) -exec test -s {} \; -print 2>/dev/null | wc -l)
+        key_count=$(find "{{ singbox_cert_dir }}" -type f \( -name '*.key' -o -name '*key*.pem' \) -exec test -s {} \; -print 2>/dev/null | wc -l)
+        test "$cert_count" -gt 0
+        test "$key_count" -gt 0
+      args:
+        executable: /bin/sh
+      register: _mirrored_cert_dir_check
+      changed_when: false
+      when: _local_cert_dir_check.rc != 0
+
+    - name: Remove source certificate archive
+      file:
+        path: "{{ _singbox_cert_remote_archive }}"
+        state: absent
+      delegate_to: "{{ _singbox_cert_source_host }}"
+      changed_when: false
+      when: _local_cert_dir_check.rc != 0
+
+    - name: Remove local certificate archive cache
+      file:
+        path: "{{ _singbox_cert_cache_dir }}"
+        state: absent
+      delegate_to: localhost
+      become: false
+      changed_when: false
+      when: _local_cert_dir_check.rc != 0
+
     - name: Validate config with sing-box check
       command: "{{ singbox_bin }} check -c {{ singbox_config }}"
       register: _check
