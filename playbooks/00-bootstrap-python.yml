@@ -50,11 +50,12 @@
           'Upgrading' in alpine_py.stdout
         )
 
-    - name: "[Debian] Install Python3 via raw"
+    - name: "[Debian] Install Python3 + python3-apt via raw"
       raw: |
         set -e
         apt-get update
-        DEBIAN_FRONTEND=noninteractive apt-get install -y python3 ca-certificates
+        # python3-apt：Ansible apt 模块依赖；极简 Debian 无此包会自举失败 (cmd: update ENOENT)
+        DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-apt ca-certificates
       args:
         executable: /bin/bash
       when: "'debian' in (os_check.stdout | default(''))"
