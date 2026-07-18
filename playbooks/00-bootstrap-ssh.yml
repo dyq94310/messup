@@ -454,22 +454,6 @@
                 | list))
             | unique
           }}
-        ssh_authorized_keys_b64_all: >-
-          {{
-            ([auth_pubkey_export.stdout | trim]
-              + (extra_pubkey_contents.results | default([])
-                | map(attribute='content')
-                | map('b64decode')
-                | map('split', '\n')
-                | flatten
-                | map('trim')
-                | reject('equalto', '')
-                | reject('match', '^#')
-                | list))
-            | unique
-            | map('b64encode')
-            | list
-          }}
       delegate_to: localhost
       delegate_facts: true
       become: false
@@ -497,9 +481,7 @@
         touch /root/.ssh/authorized_keys
         chmod 600 /root/.ssh/authorized_keys
         changed=0
-        while read -r PUB_B64; do
-          [ -n "$PUB_B64" ] || continue
-          PUB=$(printf '%s' "$PUB_B64" | base64 -d)
+        while IFS= read -r PUB; do
           [ -n "$PUB" ] || continue
           if grep -qxF "$PUB" /root/.ssh/authorized_keys 2>/dev/null; then
             continue
@@ -507,7 +489,7 @@
           printf '%s\n' "$PUB" >> /root/.ssh/authorized_keys
           changed=1
         done <<'__MESSUP_AUTHORIZED_KEYS__'
-        {{ hostvars['localhost'].ssh_authorized_keys_b64_all | join('\n') }}
+        {{ hostvars['localhost'].ssh_authorized_keys_all | join('\n') }}
         __MESSUP_AUTHORIZED_KEYS__
         if [ "$changed" -eq 1 ]; then
           echo __AUTHORIZED_KEYS_UPDATED__
