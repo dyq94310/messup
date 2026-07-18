@@ -473,44 +473,94 @@
           请确认每行都是 OpenSSH public key 格式。
       run_once: true
 
-    - name: Install authorized keys
+    - name: Normalize escaped newlines in authorized_keys
       raw: |
         set -e
         mkdir -p /root/.ssh
         chmod 700 /root/.ssh
         touch /root/.ssh/authorized_keys
         chmod 600 /root/.ssh/authorized_keys
-        changed=0
-        while IFS= read -r PUB; do
-          [ -n "$PUB" ] || continue
-          if grep -qxF "$PUB" /root/.ssh/authorized_keys 2>/dev/null; then
-            continue
+        if ! grep -q '\\n' /root/.ssh/authorized_keys 2>/dev/null; then
+          echo __AUTHORIZED_KEYS_NORMAL__
+          exit 0
+        fi
+        tmp=/root/.ssh/authorized_keys.tmp
+        : > "$tmp"
+        while IFS= read -r line || [ -n "$line" ]; do
+          rest=$line
+          while :; do
+            case "$rest" in
+              *\\n*)
+                part=${rest%%\\n*}
+                printf '%s\n' "$part" >> "$tmp"
+                rest=${rest#*\\n}
+                ;;
+              *)
+                printf '%s\n' "$rest" >> "$tmp"
+                break
+                ;;
+            esac
+          done
+        done < /root/.ssh/authorized_keys
+        awk 'NF && !seen[$0]++' "$tmp" > /root/.ssh/authorized_keys
+        chmod 600 /root/.ssh/authorized_keys
+        rm -f "$tmp"
+        echo __AUTHORIZED_KEYS_NORMALIZED__
+      args:
+        executable: /bin/sh
+      register: authorized_keys_normalize
+      changed_when: >-
+        authorized_keys_normalize.stdout is defined and '__AUTHORIZED_KEYS_NORMALIZED__' in authorized_keys_normalize.stdout
+      failed_when: >-
+        (authorized_keys_normalize.rc | default(1) | int != 0)
+        or (authorized_keys_normalize.stdout is not defined)
+        or (
+          '__AUTHORIZED_KEYS_NORMALIZED__' not in authorized_keys_normalize.stdout
+          and '__AUTHORIZED_KEYS_NORMAL__' not in authorized_keys_normalize.stdout
+        )
+
+    - name: Install authorized key
+      raw: |
+        set -e
+        mkdir -p /root/.ssh
+        chmod 700 /root/.ssh
+        touch /root/.ssh/authorized_keys
+        chmod 600 /root/.ssh/authorized_keys
+        PUB={{ item | quote }}
+        if [ -z "$PUB" ]; then
+          echo __AUTHORIZED_KEY_EMPTY__
+          exit 1
+        fi
+        if grep -qxF "$PUB" /root/.ssh/authorized_keys 2>/dev/null; then
+          echo __AUTHORIZED_KEY_PRESENT__
+        else
+          if [ -s /root/.ssh/authorized_keys ]; then
+            last=$(tail -c 1 /root/.ssh/authorized_keys 2>/dev/null || true)
+            if [ -n "$last" ]; then
+              printf '\n' >> /root/.ssh/authorized_keys
+            fi
           fi
           printf '%s\n' "$PUB" >> /root/.ssh/authorized_keys
-          changed=1
-        done <<'__MESSUP_AUTHORIZED_KEYS__'
-        {{ hostvars['localhost'].ssh_authorized_keys_all | join('\n') }}
-        __MESSUP_AUTHORIZED_KEYS__
-        if [ "$changed" -eq 1 ]; then
-          echo __AUTHORIZED_KEYS_UPDATED__
-        else
-          echo __AUTHORIZED_KEYS_ALREADY__
+          echo __AUTHORIZED_KEY_INSTALLED__
         fi
       args:
         executable: /bin/sh
-      register: authorized_keys_sync
+      loop: "{{ hostvars['localhost'].ssh_authorized_keys_all }}"
+      register: authorized_key_sync
+      no_log: true
       changed_when: >-
-        authorized_keys_sync.stdout is defined and '__AUTHORIZED_KEYS_UPDATED__' in authorized_keys_sync.stdout
+        authorized_key_sync.stdout is defined and '__AUTHORIZED_KEY_INSTALLED__' in authorized_key_sync.stdout
       failed_when: >-
-        (authorized_keys_sync.rc | default(1) | int != 0)
-        or (authorized_keys_sync.stdout is not defined)
+        (authorized_key_sync.rc | default(1) | int != 0)
+        or (authorized_key_sync.stdout is not defined)
         or (
-          '__AUTHORIZED_KEYS_UPDATED__' not in authorized_keys_sync.stdout
-          and '__AUTHORIZED_KEYS_ALREADY__' not in authorized_keys_sync.stdout
+          '__AUTHORIZED_KEY_INSTALLED__' not in authorized_key_sync.stdout
+          and '__AUTHORIZED_KEY_PRESENT__' not in authorized_key_sync.stdout
         )
 
     - name: Report authorized key sync result
       debug:
         msg: >-
           ✅ {{ inventory_hostname }} authorized_keys
-          {{ '已更新' if ('__AUTHORIZED_KEYS_UPDATED__' in (authorized_keys_sync.stdout | default(''))) else '已齐全' }}
+          {{ '已修复换行；' if (authorized_keys_normalize is changed) else '' }}
+          已同步 {{ hostvars['localhost'].ssh_authorized_keys_all | length }} 把公钥
