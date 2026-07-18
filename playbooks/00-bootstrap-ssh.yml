@@ -117,7 +117,10 @@
   any_errors_fatal: false
   tags: [bootstrap_ssh, bootstrap, always]
   vars:
-    bootstrap_ssh_privkey: "{{ ansible_ssh_private_key_file | default('~/.ssh/id_ed25519_github') | expanduser }}"
+    # 必须与 ansible_ssh_private_key_file=/dev/null 脱钩：同 play 延迟求值会把
+    # "{{ ansible_ssh_private_key_file }}" 解析成 /dev/null，ssh-keygen -y 必失败。
+    # CI/本地均写入 ~/.ssh/id_ed25519_github（见 workflow --private-key / inventory）。
+    bootstrap_ssh_privkey: "{{ '~/.ssh/id_ed25519_github' | expanduser }}"
     # 密码阶段：只用密码，禁用公钥与 ControlMaster
     ansible_password: "{{ bootstrap_password }}"
     ansible_ssh_private_key_file: /dev/null
@@ -208,6 +211,15 @@
       changed_when: false
       register: pubkey_for_install
       no_log: true
+      failed_when: false
+
+    - name: Fail when private key cannot export public key
+      fail:
+        msg: >-
+          无法从 {{ bootstrap_ssh_privkey }} 导出公钥（ssh-keygen -y）。
+          请确认 CI Secret ANSIBLE_SSH_KEY 已写入该路径，且为有效私钥。
+      run_once: true
+      when: pubkey_for_install.rc | default(1) != 0
 
     - name: Fail when public key export empty
       fail:
