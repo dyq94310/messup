@@ -72,6 +72,16 @@
         update_cache: true
       when: _is_alpine | bool
 
+    - name: Ensure apt module dependencies (Debian)
+      raw: |
+        set -e
+        apt-get update
+        DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-apt ca-certificates
+      args:
+        executable: /bin/bash
+      when: _is_debian | bool
+      changed_when: false
+
     - name: Install runtime dependencies (Debian)
       apt:
         name:
