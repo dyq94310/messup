@@ -83,7 +83,7 @@
           {{ inventory_hostname }} key_ok={{ ssh_key_ok }}
           has_bootstrap_password={{ has_bootstrap_password }}
 
-    # 仅密钥失败 + 有密码 → 密码装钥（密钥已通时若仍写密码，可能已 passwd -l，勿强行走密码）
+    # 仅密钥失败 + 有密码 → 密码装钥（密钥已通时勿再走密码；sshd 可能已关 PasswordAuthentication）
     - name: Mark hosts that need password bootstrap
       group_by:
         key: needs_ssh_bootstrap
@@ -303,23 +303,68 @@
       debug:
         msg: "✅ {{ inventory_hostname }} 密钥登录复核成功"
 
-    - name: Lock root password after key verified
+    # 勿 passwd -l root：Alpine/OpenSSH+PAM 下会锁死账号，公钥也会 Permission denied。
+    # 仅关密码登录（sshd），并在改配置后再复核一次密钥。
+    - name: Disable password authentication in sshd
       raw: |
         set -e
-        if command -v passwd >/dev/null 2>&1; then
-          passwd -l root 2>/dev/null || passwd -l 2>/dev/null || true
-          echo __PASSWD_LOCKED__
+        conf=/etc/ssh/sshd_config
+        if [ ! -f "$conf" ]; then
+          echo __SSHD_CONF_MISSING__
+          exit 0
+        fi
+        changed=0
+        ensure_kv() {
+          key="$1"
+          val="$2"
+          if grep -qiE "^[[:space:]]*${key}[[:space:]]+" "$conf" 2>/dev/null; then
+            if ! grep -qiE "^[[:space:]]*${key}[[:space:]]+${val}([[:space:]]|$)" "$conf" 2>/dev/null; then
+              sed -i -E "s|^[[:space:]]*${key}[[:space:]]+.*|${key} ${val}|" "$conf"
+              changed=1
+            fi
+          else
+            printf '\n%s %s\n' "$key" "$val" >> "$conf"
+            changed=1
+          fi
+        }
+        ensure_kv PasswordAuthentication no
+        ensure_kv KbdInteractiveAuthentication no
+        ensure_kv ChallengeResponseAuthentication no
+        ensure_kv PermitRootLogin prohibit-password
+        if [ "$changed" -eq 1 ]; then
+          if command -v rc-service >/dev/null 2>&1; then
+            rc-service sshd reload 2>/dev/null || rc-service sshd restart 2>/dev/null || true
+          elif command -v systemctl >/dev/null 2>&1; then
+            systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null \
+              || systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || true
+          elif command -v service >/dev/null 2>&1; then
+            service sshd reload 2>/dev/null || service ssh reload 2>/dev/null \
+              || service sshd restart 2>/dev/null || true
+          fi
+          echo __SSHD_PW_DISABLED__
         else
-          echo __PASSWD_SKIP__
+          echo __SSHD_PW_ALREADY__
         fi
       args:
         executable: /bin/sh
-      register: lock_pw
+      register: sshd_pw
       changed_when: >-
-        lock_pw.stdout is defined and '__PASSWD_LOCKED__' in lock_pw.stdout
+        sshd_pw.stdout is defined and '__SSHD_PW_DISABLED__' in sshd_pw.stdout
+      failed_when: false
+
+    - name: Re-probe key auth after sshd harden
+      raw: echo __KEY_OK__
+      args:
+        executable: /bin/sh
+      register: key_verify_after_harden
+      changed_when: false
+      failed_when: >-
+        (key_verify_after_harden.unreachable | default(false) | bool)
+        or ((key_verify_after_harden.rc | default(1)) | int != 0)
+        or ('__KEY_OK__' not in (key_verify_after_harden.stdout | default('')))
 
     - name: Note bootstrap password cleanup
       debug:
         msg: >-
-          ✅ {{ inventory_hostname }} 公钥已就绪且已尝试 passwd -l root。
+          ✅ {{ inventory_hostname }} 公钥已就绪；已尝试关闭 sshd 密码登录（未 passwd -l）。
           请从 inventory 删除 bootstrap_password 字段后提交。

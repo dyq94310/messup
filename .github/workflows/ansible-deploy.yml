@@ -255,6 +255,8 @@ jobs:
           ANSIBLE_HOST_KEY_CHECKING: "False"
           PRIVATE_KEY: /home/runner/.ssh/id_ed25519_github
           LIMIT: ${{ steps.detect.outputs.limit }}
+          # 与 bootstrap 一致，避免 ansible.cfg ControlMaster / 多钥串扰
+          ANSIBLE_SSH_ARGS: "-o IdentitiesOnly=yes -o PreferredAuthentications=publickey -o PasswordAuthentication=no -o ControlMaster=no -o ControlPath=none -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=12"
         run: |
           set -euo pipefail
           export PRIVATE_KEY="${HOME}/.ssh/id_ed25519_github"
@@ -266,6 +268,7 @@ jobs:
         env:
           ANSIBLE_HOST_KEY_CHECKING: "False"
           ANSIBLE_FORCE_COLOR: "1"
+          ANSIBLE_SSH_ARGS: "-o IdentitiesOnly=yes -o ControlMaster=no -o ControlPath=none -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
         run: |
           set -euo pipefail
           EXTRA="${{ steps.detect.outputs.extra }}"

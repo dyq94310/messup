@@ -31,6 +31,8 @@ fi
 export ANSIBLE_HOST_KEY_CHECKING="${ANSIBLE_HOST_KEY_CHECKING:-False}"
 # 缩短不可达主机等待时间
 export ANSIBLE_TIMEOUT="${ANSIBLE_TIMEOUT:-15}"
+# 与 bootstrap 一致：IdentitiesOnly + 禁用 ControlMaster，避免串钥/复用失败会话
+export ANSIBLE_SSH_ARGS="${ANSIBLE_SSH_ARGS:--o IdentitiesOnly=yes -o PreferredAuthentications=publickey -o PasswordAuthentication=no -o ControlMaster=no -o ControlPath=none -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=12}"
 
 TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT

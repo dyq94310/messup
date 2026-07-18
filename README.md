@@ -111,7 +111,7 @@ ssh-keygen -t ed25519 -C "id_ed25519_github" -f ~/.ssh/id_ed25519_github -N ""
 10.0.0.30 ansible_port=22 deployment_env=node-b bootstrap_password=面板初始密码
 ```
 
-push 后 CI / 本地 `deploy.sh` 会：先试密钥 → 失败则用密码装公钥 → `passwd -l root` → 密钥复核 → 业务部署。  
+push 后 CI / 本地 `deploy.sh` 会：先试密钥 → 失败则用密码装公钥 → 关 sshd 密码登录 → 密钥复核 → 业务部署。  
 成功后**立刻**从 inventory 删掉 `bootstrap_password=...` 再 commit。控制机需 `sshpass`。
 
 **手动（可选）**：
