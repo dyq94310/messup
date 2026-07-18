@@ -79,6 +79,7 @@ messup-private/                      # 私有仓（本地/CI 注入为 private-c
 │   ├── inventory.ini
 │   └── group_vars/all.yml           # 版本号 + nft 默认参数
 ├── singbox/<env>/config.json
+├── ssh/public_keys/*.pub             # 额外个人电脑 SSH 公钥，下发到所有 lxc_nodes
 ├── smartdns/smartdns.conf           # 全局共用
 ├── nft/apply.sh                     # 唯一业务逻辑
 └── nft/<env>/mappings.txt           # proto lport dip dport
@@ -95,6 +96,8 @@ messup-private/                      # 私有仓（本地/CI 注入为 private-c
 | SSH 登录 LXC | 公钥 → 各节点 `authorized_keys`；私钥 → CI / 本地 Ansible |
 | 拉取 messup-private | 公钥 → private 仓 **Deploy keys**；私钥同上（CI 中的 `ANSIBLE_SSH_KEY`） |
 | 本地 git / ansible | `IdentityFile ~/.ssh/id_ed25519_github` |
+
+额外个人电脑登录只提交公钥到 `messup-private/ssh/public_keys/*.pub`。`00-bootstrap-ssh.yml` 会把这些公钥同步到所有 `lxc_nodes` 的 `/root/.ssh/authorized_keys`，不要提交私钥。
 
 私有仓路径固定为 `dyq94310/messup-private`（workflow 内写死，无需 `PRIVATE_REPO` Secret）。
 
