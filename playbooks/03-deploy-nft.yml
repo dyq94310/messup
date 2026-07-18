@@ -321,11 +321,9 @@
         )
 
     - name: Enable messup-nft (OpenRC default runlevel)
-      service:
-        name: "{{ nft_service }}"
-        enabled: true
-        runlevel: default
+      command: "rc-update add {{ nft_service }} default"
       register: _nft_enable
+      changed_when: "'already installed' not in (_nft_enable.stdout | default(''))"
       when: _nft_ok | bool and _init == 'openrc'
       ignore_errors: true
 
@@ -337,12 +335,18 @@
       when: _nft_ok | bool and _init == 'systemd'
       ignore_errors: true
 
-    - name: Apply via service (restart = re-run oneshot apply.sh)
+    - name: Apply via service (OpenRC restart = re-run oneshot apply.sh)
+      command: "rc-service {{ nft_service }} restart"
+      register: _nft_run
+      when: _nft_ok | bool and _init == 'openrc'
+      ignore_errors: true
+
+    - name: Apply via service (systemd restart = re-run oneshot apply.sh)
       service:
         name: "{{ nft_service }}"
         state: restarted
       register: _nft_run
-      when: _nft_ok | bool
+      when: _nft_ok | bool and _init == 'systemd'
       ignore_errors: true
 
     - name: Warn if service apply failed

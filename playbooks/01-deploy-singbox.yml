@@ -251,10 +251,9 @@
       when: _init == 'systemd' and (_sb_unit_sys is defined and _sb_unit_sys is changed)
 
     - name: Enable singbox (OpenRC default runlevel)
-      service:
-        name: "{{ singbox_service }}"
-        enabled: true
-        runlevel: default
+      command: "rc-update add {{ singbox_service }} default"
+      register: _openrc_enable
+      changed_when: "'already installed' not in (_openrc_enable.stdout | default(''))"
       when: _init == 'openrc'
 
     - name: Enable singbox (systemd)
@@ -263,10 +262,19 @@
         enabled: true
       when: _init == 'systemd'
 
-    - name: Ensure singbox is started
+    - name: Ensure singbox is started (OpenRC)
+      command: "rc-service {{ singbox_service }} start"
+      register: _openrc_start
+      changed_when: >-
+        'already started' not in (_openrc_start.stdout | default(''))
+        and 'started' in (_openrc_start.stdout | default(''))
+      when: _init == 'openrc'
+
+    - name: Ensure singbox is started (systemd)
       service:
         name: "{{ singbox_service }}"
         state: started
+      when: _init == 'systemd'
 
     - name: Cleanup download archive
       file:
@@ -309,7 +317,14 @@
           - "  service:  {{ _svc_status.stdout | default('n/a') | trim }}"
 
   handlers:
-    - name: Restart singbox
+    - name: Restart singbox (OpenRC)
+      listen: Restart singbox
+      command: "rc-service {{ singbox_service }} restart"
+      when: _init == 'openrc'
+
+    - name: Restart singbox (systemd)
+      listen: Restart singbox
       service:
         name: "{{ singbox_service }}"
         state: restarted
+      when: _init == 'systemd'
