@@ -80,6 +80,24 @@
       changed_when: false
       failed_when: python_version.rc != 0
 
+    # auto_silent 会按控制端版本探测 /usr/bin/python3.13 等，目标机常只有 /usr/bin/python3
+    - name: Resolve python3 absolute path
+      raw: command -v python3
+      args:
+        executable: /bin/sh
+      register: python_path
+      changed_when: false
+      failed_when: >-
+        (python_path.rc | default(1) | int != 0)
+        or ((python_path.stdout | default('') | trim | length) == 0)
+
+    - name: Pin ansible_python_interpreter to real python3
+      set_fact:
+        ansible_python_interpreter: "{{ python_path.stdout | trim }}"
+
     - name: Show Python version
       debug:
-        msg: "✅ Python ready on {{ inventory_hostname }}: {{ python_version.stdout | trim }}"
+        msg: >-
+          ✅ Python ready on {{ inventory_hostname }}:
+          {{ python_version.stdout | trim }}
+          (interpreter={{ ansible_python_interpreter }})
