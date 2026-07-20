@@ -303,11 +303,11 @@ systemctl is-enabled singbox smartdns messup-nft
 本机（控制机，inventory 已就绪；两种 OS 通用）：
 
 ```bash
-ansible all_nodes -m service -a "name=singbox state=restarted"
-ansible all_nodes -m service -a "name=smartdns state=restarted"
-ansible all_nodes -m service -a "name=messup-nft state=restarted"
+ansible singbox_nodes -m service -a "name=singbox state=restarted"
+ansible smartdns_nodes -m service -a "name=smartdns state=restarted"
+ansible nft_nodes -m service -a "name=messup-nft state=restarted"
 # 单机
-ansible all_nodes -m service -a "name=singbox state=restarted" --limit 172.245.220.230
+ansible singbox_nodes -m service -a "name=singbox state=restarted" --limit 172.245.220.230
 ```
 
 ### 状态 / 校验
@@ -331,7 +331,7 @@ nft list table ip forward
 
 ### sing-box 证书同步
 
-默认维护一个证书目录 `singbox_cert_dir=/etc/cert`。多节点部署时，必须在 `inventory.ini` 的 `all_nodes` 中标记且只标记一台证书源节点：
+默认维护一个证书目录 `singbox_cert_dir=/etc/cert`。多节点部署时，必须在 `inventory.ini` 的 `singbox_nodes` 中标记且只标记一台证书源节点：
 
 ```ini
 172.245.220.230 ansible_port=29586 deployment_env=rear singbox_cert_source=true

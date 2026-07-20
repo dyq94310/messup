@@ -3,8 +3,8 @@
 # 支持 Alpine (OpenRC) 与 Debian/Ubuntu (systemd)
 # nft 执行失败只警告，不中止该主机后续 play / 整批部署
 # mappings: private-config/nft/<deployment_env>/mappings.txt
-- name: Deploy nft port-forward on managed nodes
-  hosts: all_nodes
+- name: Deploy nft port-forward on nft nodes
+  hosts: nft_nodes
   become: false
   gather_facts: true
   ignore_unreachable: true
