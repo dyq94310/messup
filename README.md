@@ -1,6 +1,6 @@
 # messup
 
-公开 Ansible 仓库：向多台 **Alpine / Debian LXC** 部署 **sing-box**、**SmartDNS** 与 **nft 端口转发**。
+公开 Ansible 仓库：向多台 **Alpine / Debian LXC 或 KVM** 部署 **sing-box**、**SmartDNS** 与 **nft 端口转发**。
 
 - **Alpine**：OpenRC；sing-box 使用 **musl** 二进制  
 - **Debian/Ubuntu**：systemd；sing-box 使用 **glibc** 二进制  
@@ -26,7 +26,7 @@
 └─────────────────┘               └──────────┬───────────┘
                                              │ SSH
 ┌─────────────────┐     push      ┌──────────▼───────────┐
-│  messup-private │ ──repository_ │  Alpine/Debian LXC   │
+│  messup-private │ ──repository_ │  Alpine/Debian LXC/KVM │
 │  (private)      │   _dispatch──►│  sing-box/smartdns/nft│
 │  inventory/     │               └──────────────────────┘
 │  singbox/<env>/ │
@@ -79,7 +79,7 @@ messup-private/                      # 私有仓（本地/CI 注入为 private-c
 │   ├── inventory.ini
 │   └── group_vars/all.yml           # 版本号 + nft 默认参数
 ├── singbox/<env>/config.json
-├── ssh/public_keys/*.pub             # 额外个人电脑 SSH 公钥，下发到所有 lxc_nodes
+├── ssh/public_keys/*.pub             # 额外个人电脑 SSH 公钥，下发到所有 all_nodes
 ├── smartdns/smartdns.conf           # 全局共用
 ├── nft/apply.sh                     # 唯一业务逻辑
 └── nft/<env>/mappings.txt           # proto lport dip dport
@@ -93,11 +93,11 @@ messup-private/                      # 私有仓（本地/CI 注入为 private-c
 
 | 用途 | 使用方式 |
 |------|----------|
-| SSH 登录 LXC | 公钥 → 各节点 `authorized_keys`；私钥 → CI / 本地 Ansible |
+| SSH 登录节点 | 公钥 → 各节点 `authorized_keys`；私钥 → CI / 本地 Ansible |
 | 拉取 messup-private | 公钥 → private 仓 **Deploy keys**；私钥同上（CI 中的 `ANSIBLE_SSH_KEY`） |
 | 本地 git / ansible | `IdentityFile ~/.ssh/id_ed25519_github` |
 
-额外个人电脑登录只提交公钥到 `messup-private/ssh/public_keys/*.pub`。`00-bootstrap-ssh.yml` 会把这些公钥同步到所有 `lxc_nodes` 的 `/root/.ssh/authorized_keys`，不要提交私钥。
+额外个人电脑登录只提交公钥到 `messup-private/ssh/public_keys/*.pub`。`00-bootstrap-ssh.yml` 会把这些公钥同步到所有 `all_nodes` 的 `/root/.ssh/authorized_keys`，不要提交私钥。
 
 私有仓路径固定为 `dyq94310/messup-private`（workflow 内写死，无需 `PRIVATE_REPO` Secret）。
 
@@ -107,7 +107,7 @@ messup-private/                      # 私有仓（本地/CI 注入为 private-c
 ssh-keygen -t ed25519 -C "id_ed25519_github" -f ~/.ssh/id_ed25519_github -N ""
 ```
 
-### 2. 公钥装到 LXC + private Deploy Key
+### 2. 公钥装到节点 + private Deploy Key
 
 **推荐（新机）**：在 **messup-private** `inventory.ini` 写临时密码，由 Ansible 自动装钥：
 
@@ -137,7 +137,7 @@ GitHub → **messup-private** → Settings → Deploy keys → Add deploy key：
 
 | Secret | 必填 | 说明 |
 |--------|------|------|
-| `ANSIBLE_SSH_KEY` | ✅ | `~/.ssh/id_ed25519_github` **私钥**全文（同时用于拉 private + SSH LXC） |
+| `ANSIBLE_SSH_KEY` | ✅ | `~/.ssh/id_ed25519_github` **私钥**全文（同时用于拉 private + SSH managed nodes） |
 
 ```bash
 # 把私钥粘贴到 messup → Settings → Secrets → Actions → ANSIBLE_SSH_KEY
@@ -158,7 +158,7 @@ cat ~/.ssh/id_ed25519_github
 ### 5. 关系一览
 
 ```
-~/.ssh/id_ed25519_github.pub  →  各 LXC authorized_keys
+~/.ssh/id_ed25519_github.pub  →  各 managed nodes authorized_keys
                               →  messup-private Deploy keys（只读）
 
 ~/.ssh/id_ed25519_github      →  messup Secret: ANSIBLE_SSH_KEY
@@ -303,11 +303,11 @@ systemctl is-enabled singbox smartdns messup-nft
 本机（控制机，inventory 已就绪；两种 OS 通用）：
 
 ```bash
-ansible lxc_nodes -m service -a "name=singbox state=restarted"
-ansible lxc_nodes -m service -a "name=smartdns state=restarted"
-ansible lxc_nodes -m service -a "name=messup-nft state=restarted"
+ansible all_nodes -m service -a "name=singbox state=restarted"
+ansible all_nodes -m service -a "name=smartdns state=restarted"
+ansible all_nodes -m service -a "name=messup-nft state=restarted"
 # 单机
-ansible lxc_nodes -m service -a "name=singbox state=restarted" --limit 172.245.220.230
+ansible all_nodes -m service -a "name=singbox state=restarted" --limit 172.245.220.230
 ```
 
 ### 状态 / 校验
@@ -331,7 +331,7 @@ nft list table ip forward
 
 ### sing-box 证书同步
 
-默认维护一个证书目录 `singbox_cert_dir=/etc/cert`。多节点部署时，必须在 `inventory.ini` 的 `lxc_nodes` 中标记且只标记一台证书源节点：
+默认维护一个证书目录 `singbox_cert_dir=/etc/cert`。多节点部署时，必须在 `inventory.ini` 的 `all_nodes` 中标记且只标记一台证书源节点：
 
 ```ini
 172.245.220.230 ansible_port=29586 deployment_env=rear singbox_cert_source=true
@@ -357,7 +357,7 @@ nft list table ip forward
 | sudo 相关错误 | 本方案 root 直连 `ansible_become=false`；勿强行 sudo |
 | 预检不用 `ping` 模块 | 裸 Alpine/最小 Debian 可能无 Python；CI/本地用 `scripts/check-connectivity.sh`（`raw`） |
 | 某台 IP 不通 | 只 **警告并跳过**，其余主机继续部署；仅**全部**不可达才失败 |
-| `nft` Operation not permitted | LXC 缺 `CAP_NET_ADMIN`：Proxmox 勿 drop `net_admin`，重启 CT 后 `nft list tables` 应成功 |
+| `nft` Operation not permitted | 容器可能缺 `CAP_NET_ADMIN`：Proxmox 勿 drop `net_admin`；KVM 检查系统权限，重启后 `nft list tables` 应成功 |
 | Debian 服务未起来 | 查 `systemctl status singbox` / `journalctl -u singbox -n 50`；确认 unit 在 `/etc/systemd/system/` |
 | sing-box 下载 404 / 无法执行 | Alpine 应用 musl 包、Debian 用 glibc；确认 `singbox_version` 与 release 资产名一致 |
 
@@ -367,7 +367,7 @@ nft list table ip forward
 
 - 公开仓 **禁止** 提交 `private-config/`、inventory、节点密码、Token
 - 主机清单（IP/端口）与版本变量均在 **messup-private/inventory/**
-- 本方案为省事复用一把 `id_ed25519_github`；若泄露需同时轮换 LXC 与 private Deploy Key
+- 本方案为省事复用一把 `id_ed25519_github`；若泄露需同时轮换各节点与 private Deploy Key
 - 定期轮换 PAT 与 SSH 密钥
 - 注意：旧公开提交历史中仍可能含曾泄露的 inventory，必要时轮换 SSH 端口
 - 配置文件权限：sing-box `0600`，smartdns `0644`

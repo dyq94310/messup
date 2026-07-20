@@ -1,8 +1,8 @@
 ---
 # 部署 / 更新 SmartDNS（二进制 + OpenRC/systemd + 按节点私有配置）
 # 支持 Alpine (OpenRC) 与 Debian/Ubuntu (systemd)
-- name: Deploy SmartDNS on LXC
-  hosts: lxc_nodes
+- name: Deploy SmartDNS on managed nodes
+  hosts: all_nodes
   become: false
   gather_facts: true
   ignore_unreachable: true

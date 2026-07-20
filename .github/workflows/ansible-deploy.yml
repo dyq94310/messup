@@ -30,7 +30,7 @@ concurrency:
 
 jobs:
   deploy:
-    name: Deploy to LXC nodes
+    name: Deploy to managed nodes
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -42,12 +42,12 @@ jobs:
 
       # 公私钥统一使用 id_ed25519_github：
       # - Secret ANSIBLE_SSH_KEY = 该私钥全文
-      # - 同时用于：checkout messup-private（Deploy Key）+ SSH 登录 LXC
+      # - 同时用于：checkout messup-private（Deploy Key）+ SSH 登录 managed nodes
       - name: Require ANSIBLE_SSH_KEY
         run: |
           if [ -z "${{ secrets.ANSIBLE_SSH_KEY }}" ]; then
             echo "::error::缺少 Secret ANSIBLE_SSH_KEY（~/.ssh/id_ed25519_github 私钥全文）"
-            echo "同一把密钥需：1) 加到各 LXC authorized_keys  2) 加到 messup-private Deploy keys"
+            echo "同一把密钥需：1) 加到各 managed nodes authorized_keys  2) 加到 messup-private Deploy keys"
             exit 1
           fi
 
@@ -155,7 +155,7 @@ jobs:
             echo "- limit: \`${LIMIT:-all hosts}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Setup SSH for Ansible → LXC (same id_ed25519_github)
+      - name: Setup SSH for Ansible → managed nodes (same id_ed25519_github)
         run: |
           set -euo pipefail
           mkdir -p ~/.ssh

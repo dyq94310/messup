@@ -1,8 +1,8 @@
 ---
 # 部署 / 更新 Sing-box（二进制 + OpenRC/systemd + 按节点私有配置）
 # 支持 Alpine (OpenRC/musl) 与 Debian/Ubuntu (systemd/glibc)
-- name: Deploy sing-box on LXC
-  hosts: lxc_nodes
+- name: Deploy sing-box on managed nodes
+  hosts: all_nodes
   become: false
   gather_facts: true
   ignore_unreachable: true
@@ -211,7 +211,7 @@
     - name: Collect configured sing-box certificate source hosts
       set_fact:
         _singbox_cert_source_hosts: "{{ (_singbox_cert_source_hosts | default([])) + [item] }}"
-      loop: "{{ groups['lxc_nodes'] | default([]) }}"
+      loop: "{{ groups['all_nodes'] | default([]) }}"
       when: hostvars[item].singbox_cert_source | default(false) | bool
 
     - name: Require exactly one sing-box certificate source host
@@ -219,7 +219,7 @@
         that:
           - (_singbox_cert_source_hosts | default([]) | length) == 1
         fail_msg: >-
-          ❌ 必须在 inventory 的 lxc_nodes 中用 singbox_cert_source=true 标记且只标记一台证书源节点。
+          ❌ 必须在 inventory 的 all_nodes 中用 singbox_cert_source=true 标记且只标记一台证书源节点。
           当前匹配: {{ _singbox_cert_source_hosts | default([]) }}
 
     - name: Resolve sing-box certificate source host

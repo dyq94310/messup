@@ -9,10 +9,10 @@
 # 注意:
 # - 密码阶段必须禁用 ControlMaster / 私钥，否则会复用密钥探测失败的 SSH 会话或只试公钥
 # - 部署公钥由私钥 ssh-keygen -y 导出（与 ANSIBLE_SSH_KEY / id_ed25519_github 对应）
-# - 额外个人登录公钥可放在 private-config/ssh/public_keys/*.pub，会同步到所有 lxc_nodes
+# - 额外个人登录公钥可放在 private-config/ssh/public_keys/*.pub，会同步到所有 all_nodes
 
 - name: Probe key auth and classify hosts
-  hosts: lxc_nodes
+  hosts: all_nodes
   gather_facts: false
   become: false
   ignore_unreachable: true
@@ -370,8 +370,8 @@
           ✅ {{ inventory_hostname }} 公钥已就绪；已尝试关闭 sshd 密码登录（未 passwd -l）。
           请从 inventory 删除 bootstrap_password 字段后提交。
 
-- name: Sync SSH authorized keys to all LXC nodes
-  hosts: lxc_nodes
+- name: Sync SSH authorized keys to all managed nodes
+  hosts: all_nodes
   gather_facts: false
   become: false
   ignore_unreachable: true

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SSH 连通性预检：使用 raw 模块，不依赖目标机 Python（适合裸 Alpine LXC）
+# SSH 连通性预检：使用 raw 模块，不依赖目标机 Python（适合最小化 Alpine/Debian 节点）
 # - 可达：打印 OK
 # - 不可达：打印警告，不退出失败（除非全部不可达）
 # 输出（供 CI 使用）:
@@ -13,7 +13,7 @@ cd "$ROOT"
 
 INVENTORY="${INVENTORY:-private-config/inventory/inventory.ini}"
 PRIVATE_KEY="${PRIVATE_KEY:-${ANSIBLE_PRIVATE_KEY:-$HOME/.ssh/id_ed25519_github}}"
-GROUP="${GROUP:-lxc_nodes}"
+GROUP="${GROUP:-all_nodes}"
 LIMIT="${LIMIT:-}"
 # 全部不可达时是否失败（默认是）
 FAIL_IF_ALL_DOWN="${FAIL_IF_ALL_DOWN:-1}"
