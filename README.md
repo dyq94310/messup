@@ -262,6 +262,17 @@ CI 顺序：`00-bootstrap-ssh`（密钥 / `bootstrap_password`）→ `check-conn
 | `playbooks/01-deploy-singbox.yml` | `singbox` |
 | `playbooks/03-deploy-nft.yml` | `nft` |
 
+主仓 push 会先执行一个不连接节点的变更决策 Job：
+
+| 主仓变更 | 行为 |
+|----------|------|
+| `singbox` / `smartdns` / `nft` 业务 playbook 或模板 | 自动部署对应服务组 |
+| `README.md`、其他 Markdown、LICENSE、`.gitignore` | 不部署 |
+| `scripts/render-deploy-summary.sh` | 不部署 |
+| workflow、bootstrap、`ansible.cfg`、未知文件 | 进入 `production` Environment，等待 `Action required`；批准后全量部署 |
+
+未知变更的审批依赖 GitHub 仓库中配置 `production` Environment 的 Required reviewers。审批发生在 checkout 私有配置、写入 SSH 私钥和连接节点之前。
+
 > 使用 `--tags singbox` 时 bootstrap 带 `always` 标签仍会执行，保证 Python 就绪。
 
 ---

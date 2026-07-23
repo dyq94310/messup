@@ -29,8 +29,66 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  detect:
+    name: Decide deployment
+    runs-on: ubuntu-latest
+    outputs:
+      tags: ${{ steps.classify.outputs.tags }}
+      limit: ${{ steps.classify.outputs.limit }}
+      mode: ${{ steps.classify.outputs.mode }}
+      deploy_required: ${{ steps.classify.outputs.deploy_required }}
+      approval_required: ${{ steps.classify.outputs.approval_required }}
+      reason: ${{ steps.classify.outputs.reason }}
+    steps:
+      - name: Checkout public repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Classify change
+        id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAGS: ${{ github.event.inputs.tags }}
+          INPUT_LIMIT: ${{ github.event.inputs.limit }}
+          DISPATCH_TAGS: ${{ github.event.client_payload.tags }}
+          DISPATCH_LIMIT: ${{ github.event.client_payload.limit }}
+        run: |
+          set -euo pipefail
+          chmod +x scripts/classify-deploy-change.sh
+          OUTPUT=$(./scripts/classify-deploy-change.sh HEAD~1 HEAD)
+          echo "$OUTPUT"
+          while IFS='=' read -r key value; do
+            printf -v "$key" '%s' "$value"
+            echo "${key}=${value}" >> "$GITHUB_OUTPUT"
+          done <<< "$OUTPUT"
+          {
+            echo "## 部署决策"
+            echo ""
+            echo "| 项目 | 内容 |"
+            echo "|---|---|"
+            echo "| 变更模式 | \`${MODE:-unknown}\` |"
+            echo "| 是否部署 | \`${DEPLOY_REQUIRED:-false}\` |"
+            echo "| 是否审批 | \`${APPROVAL_REQUIRED:-false}\` |"
+            echo "| tags | \`${TAGS:-all}\` |"
+            echo "| limit | \`${LIMIT:-all}\` |"
+            echo "| 原因 | ${REASON:-unknown} |"
+            echo ""
+            if [ "${APPROVAL_REQUIRED:-false}" = "true" ]; then
+              echo "> 等待 \\`production\\` Environment 审批。批准后将按全量范围执行。"
+            elif [ "${DEPLOY_REQUIRED:-false}" = "false" ]; then
+              echo "> 不涉及业务部署，跳过节点连接。"
+            else
+              echo "> 已识别为业务变更，将自动部署。"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
   deploy:
     name: Deploy to managed nodes
+    needs: detect
+    if: needs.detect.outputs.deploy_required == 'true'
+    environment:
+      name: ${{ needs.detect.outputs.approval_required == 'true' && 'production' || 'auto-deploy' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -71,92 +129,6 @@ jobs:
             echo "::error::private-config/smartdns/smartdns.conf 不存在（全局共用配置）"
             exit 1
           }
-
-      - name: Detect deploy tags (对应服务)
-        id: detect
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          INPUT_TAGS: ${{ github.event.inputs.tags }}
-          INPUT_LIMIT: ${{ github.event.inputs.limit }}
-          DISPATCH_TAGS: ${{ github.event.client_payload.tags }}
-          DISPATCH_LIMIT: ${{ github.event.client_payload.limit }}
-        run: |
-          set -euo pipefail
-          TAGS=""
-          LIMIT=""
-
-          # 1) 手动 / dispatch 显式指定优先
-          if [ -n "${INPUT_TAGS:-}" ]; then
-            TAGS="$INPUT_TAGS"
-          elif [ -n "${DISPATCH_TAGS:-}" ]; then
-            TAGS="$DISPATCH_TAGS"
-          fi
-
-          if [ -n "${INPUT_LIMIT:-}" ]; then
-            LIMIT="$INPUT_LIMIT"
-          elif [ -n "${DISPATCH_LIMIT:-}" ]; then
-            LIMIT="$DISPATCH_LIMIT"
-          fi
-
-          # 2) 本仓 push：按变更路径推断 tags
-          if [ -z "$TAGS" ] && [ "$EVENT_NAME" = "push" ]; then
-            CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
-            echo "Changed files (push):"
-            echo "$CHANGED"
-              NEED_SB=0
-              NEED_SD=0
-              NEED_NFT=0
-              NEED_ALL=0
-              while IFS= read -r f; do
-                [ -z "$f" ] && continue
-                case "$f" in
-                  playbooks/01-deploy-singbox.yml|templates/singbox.openrc.j2|templates/singbox.service.j2)
-                    NEED_SB=1 ;;
-                  playbooks/02-deploy-smartdns.yml|templates/smartdns.openrc.j2|templates/smartdns.service.j2)
-                    NEED_SD=1 ;;
-                  playbooks/03-deploy-nft.yml|templates/messup-nft.openrc.j2|templates/messup-nft.service.j2|templates/messup-nft.env.j2)
-                    NEED_NFT=1 ;;
-                  playbooks/site.yml|playbooks/00-bootstrap-ssh.yml|playbooks/00-bootstrap-python.yml|ansible.cfg|.github/workflows/*)
-                    NEED_ALL=1 ;;
-                  *)
-                    # 其他代码变更默认全量
-                    NEED_ALL=1 ;;
-                esac
-              done <<< "$CHANGED"
-
-              if [ "$NEED_ALL" = "1" ]; then
-                TAGS=""
-              else
-                parts=()
-                [ "$NEED_SB" = "1" ] && parts+=("singbox")
-                [ "$NEED_SD" = "1" ] && parts+=("smartdns")
-                [ "$NEED_NFT" = "1" ] && parts+=("nft")
-                if [ ${#parts[@]} -gt 0 ]; then
-                  TAGS=$(IFS=,; echo "${parts[*]}")
-                fi
-              fi
-          fi
-
-          EXTRA=""
-          if [ -n "${LIMIT:-}" ]; then
-            EXTRA="$EXTRA --limit ${LIMIT}"
-          fi
-          if [ -n "${TAGS:-}" ]; then
-            EXTRA="$EXTRA --tags ${TAGS}"
-          fi
-
-          if [ -n "${LIMIT:-}" ]; then
-            MODE="targeted-host-reconcile"
-          elif [ -n "${TAGS:-}" ]; then
-            MODE="service-wide"
-          else
-            MODE="full"
-          fi
-
-          echo "extra=${EXTRA}" >> "$GITHUB_OUTPUT"
-          echo "tags=${TAGS:-<all>}" >> "$GITHUB_OUTPUT"
-          echo "limit=${LIMIT:-<all>}" >> "$GITHUB_OUTPUT"
-          echo "mode=${MODE}" >> "$GITHUB_OUTPUT"
 
       - name: Setup SSH for Ansible → managed nodes (same id_ed25519_github)
         run: |
@@ -218,7 +190,7 @@ jobs:
           ANSIBLE_SSH_ARGS: "-o ControlMaster=no -o ControlPath=none -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
         run: |
           set -euo pipefail
-          LIMIT="${{ steps.detect.outputs.limit }}"
+          LIMIT="${{ needs.detect.outputs.limit }}"
           EXTRA=""
           if [ -n "${LIMIT}" ] && [ "${LIMIT}" != "<all>" ]; then
             EXTRA="--limit ${LIMIT}"
@@ -270,7 +242,7 @@ jobs:
           ANSIBLE_HOST_KEY_CHECKING: "False"
           ANSIBLE_SSH_RETRIES: "3"
           PRIVATE_KEY: /home/runner/.ssh/id_ed25519_github
-          LIMIT: ${{ steps.detect.outputs.limit }}
+          LIMIT: ${{ needs.detect.outputs.limit }}
           # 与 bootstrap 一致，避免 ansible.cfg ControlMaster / 多钥串扰
           ANSIBLE_SSH_ARGS: "-o IdentitiesOnly=yes -o PreferredAuthentications=publickey -o PasswordAuthentication=no -o ControlMaster=no -o ControlPath=none -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=12"
         run: |
@@ -299,7 +271,11 @@ jobs:
           set -euo pipefail
           mkdir -p ~/.ansible/cp
           chmod 700 ~/.ansible/cp
-          EXTRA="${{ steps.detect.outputs.extra }}"
+          TAGS="${{ needs.detect.outputs.tags }}"
+          LIMIT="${{ needs.detect.outputs.limit }}"
+          EXTRA=""
+          if [ -n "${LIMIT}" ] && [ "${LIMIT}" != "<all>" ]; then EXTRA="${EXTRA} --limit ${LIMIT}"; fi
+          if [ -n "${TAGS}" ] && [ "${TAGS}" != "<all>" ]; then EXTRA="${EXTRA} --tags ${TAGS}"; fi
           REACH_LIMIT="${{ steps.conn.outputs.reachable_limit }}"
 
           # 部分主机不可达：去掉原有 --limit，改为仅可达主机（避免双重 --limit）
@@ -341,9 +317,9 @@ jobs:
         if: success()
         run: |
           chmod +x scripts/render-deploy-summary.sh
-          TAGS="${{ steps.detect.outputs.tags }}" \
-          LIMIT="${{ steps.detect.outputs.limit }}" \
-          MODE="${{ steps.detect.outputs.mode }}" \
+          TAGS="${{ needs.detect.outputs.tags }}" \
+          LIMIT="${{ needs.detect.outputs.limit }}" \
+          MODE="${{ needs.detect.outputs.mode }}" \
           REACHABLE="${{ steps.conn.outputs.reachable_limit }}" \
           UNREACHABLE="${{ steps.conn.outputs.unreachable_hosts }}" \
           PLAYBOOK_RC="${{ steps.play.outputs.playbook_rc }}" \
@@ -355,9 +331,9 @@ jobs:
         run: |
           echo "::error::Ansible deploy failed. 若全部主机不可达：检查密钥/端口；若单机任务失败：查看 playbook 日志。"
           chmod +x scripts/render-deploy-summary.sh
-          TAGS="${{ steps.detect.outputs.tags }}" \
-          LIMIT="${{ steps.detect.outputs.limit }}" \
-          MODE="${{ steps.detect.outputs.mode }}" \
+          TAGS="${{ needs.detect.outputs.tags }}" \
+          LIMIT="${{ needs.detect.outputs.limit }}" \
+          MODE="${{ needs.detect.outputs.mode }}" \
           REACHABLE="${{ steps.conn.outputs.reachable_limit }}" \
           UNREACHABLE="${{ steps.conn.outputs.unreachable_hosts }}" \
           PLAYBOOK_RC="${{ steps.play.outputs.playbook_rc }}" \
