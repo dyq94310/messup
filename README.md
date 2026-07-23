@@ -252,7 +252,10 @@ CI 顺序：`00-bootstrap-ssh`（密钥 / `bootstrap_password`）→ `check-conn
 | `messup-private/singbox/**` | `singbox`（含 bootstrap） |
 | `messup-private/smartdns/**` | `smartdns` |
 | `messup-private/nft/**` | `nft` |
-| `messup-private/inventory/**` | 全量 |
+| `messup-private/inventory/inventory.ini` 仅新增节点 | `--limit <新节点>` + 该节点所属服务 tags |
+| `messup-private/inventory/inventory.ini` 修改已有节点/服务组 | 全量 |
+| `messup-private/inventory/group_vars/all.yml` 中 `singbox_*` / `smartdns_*` / `nft_*` | 对应服务 tags（全服务组） |
+| `messup-private/inventory/group_vars/all.yml` 中未知或公共变量 | 全量 |
 | 两仓同时改 / 公共文件 | 全量 |
 | `playbooks/01-deploy-singbox.yml` | `singbox` |
 | `playbooks/03-deploy-nft.yml` | `nft` |
