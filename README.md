@@ -253,7 +253,9 @@ CI 顺序：`00-bootstrap-ssh`（密钥 / `bootstrap_password`）→ `check-conn
 | `messup-private/smartdns/**` | `smartdns` |
 | `messup-private/nft/**` | `nft` |
 | `messup-private/inventory/inventory.ini` 仅新增节点 | `--limit <新节点>` + 该节点所属服务 tags |
-| `messup-private/inventory/inventory.ini` 修改已有节点/服务组 | 全量 |
+| `messup-private/inventory/inventory.ini` 新增节点或既有节点参数变化 | 目标节点所属服务 tags + `--limit <节点>` |
+| `messup-private/inventory/inventory.ini` 仅调整参数顺序/空白 | 不部署 |
+| `messup-private/inventory/inventory.ini` 删除节点、服务组成员变化、证书源变化 | 全量 |
 | `messup-private/inventory/group_vars/all.yml` 中 `singbox_*` / `smartdns_*` / `nft_*` | 对应服务 tags（全服务组） |
 | `messup-private/inventory/group_vars/all.yml` 中未知或公共变量 | 全量 |
 | 两仓同时改 / 公共文件 | 全量 |
