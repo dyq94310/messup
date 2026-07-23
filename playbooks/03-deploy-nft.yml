@@ -97,7 +97,7 @@
       debug:
         msg: >-
           ⚠️  {{ inventory_hostname }} 不支持的系统（需要 Alpine 或 Debian/Ubuntu），跳过 nft。
-          os_family={{ ansible_os_family | default('?') }} pkg_mgr={{ ansible_pkg_mgr | default('?') }}
+           os_family={{ ansible_facts['os_family'] | default('?') }} pkg_mgr={{ ansible_facts['pkg_mgr'] | default('?') }}
       when: _nft_ok | bool and _init == 'unknown'
 
     - name: Mark skip when unsupported OS
@@ -412,7 +412,7 @@
           - "✅ nft port-forward applied (oneshot, reboot-safe)"
           - "  host:     {{ inventory_hostname }}"
           - "  env:      {{ deployment_env }}"
-          - "  os/init:  {{ ansible_os_family | default('?') }} / {{ _init }}"
+          - "  os/init:  {{ ansible_facts['os_family'] | default('?') }} / {{ _init }}"
           - "  in_if:    {{ _nft_in_if | default('n/a') }}"
           - "  out_if:   {{ _nft_out_if | default('n/a') }}"
           - "  dir:      {{ nft_install_dir }}"

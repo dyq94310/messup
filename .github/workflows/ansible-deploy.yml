@@ -41,7 +41,7 @@ jobs:
       reason: ${{ steps.classify.outputs.reason }}
     steps:
       - name: Checkout public repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 2
 
@@ -94,7 +94,7 @@ jobs:
 
     steps:
       - name: Checkout public playbooks (messup)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 2
 
@@ -110,7 +110,7 @@ jobs:
           fi
 
       - name: Checkout private configs (messup-private)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: dyq94310/messup-private
           ssh-key: ${{ secrets.ANSIBLE_SSH_KEY }}

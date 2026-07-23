@@ -110,7 +110,7 @@
       fail:
         msg: >-
           ❌ {{ inventory_hostname }} 不支持的系统（需要 Alpine 或 Debian/Ubuntu）。
-          os_family={{ ansible_os_family | default('?') }} pkg_mgr={{ ansible_pkg_mgr | default('?') }}
+           os_family={{ ansible_facts['os_family'] | default('?') }} pkg_mgr={{ ansible_facts['pkg_mgr'] | default('?') }}
       when: _init == 'unknown'
 
     - name: Install runtime dependencies (Alpine)
@@ -148,9 +148,9 @@
       set_fact:
         target_arch: >-
           {{
-            'amd64' if ansible_architecture in ['x86_64', 'amd64'] else
-            'arm64' if ansible_architecture in ['aarch64', 'arm64'] else
-            'armv7' if ansible_architecture in ['armv7l', 'armv7'] else
+            'amd64' if ansible_facts['architecture'] in ['x86_64', 'amd64'] else
+            'arm64' if ansible_facts['architecture'] in ['aarch64', 'arm64'] else
+            'armv7' if ansible_facts['architecture'] in ['armv7l', 'armv7'] else
             'unknown'
           }}
         # Alpine = musl；Debian/Ubuntu = glibc
@@ -159,15 +159,15 @@
     - name: Fail on unknown architecture
       fail:
         msg: >-
-          ❌ 不支持的架构: {{ ansible_architecture }}
+          ❌ 不支持的架构: {{ ansible_facts['architecture'] }}
           支持: x86_64/amd64 → amd64, aarch64/arm64 → arm64, armv7l → armv7
       when: target_arch == 'unknown'
 
     - name: Show target architecture
       debug:
         msg: >-
-          Host {{ inventory_hostname }} os={{ ansible_os_family | default('?') }}
-          init={{ _init }} arch={{ ansible_architecture }}
+          Host {{ inventory_hostname }} os={{ ansible_facts['os_family'] | default('?') }}
+          init={{ _init }} arch={{ ansible_facts['architecture'] }}
           libc={{ singbox_libc }} → {{ target_arch }}
 
     - name: Ensure install directory
@@ -490,7 +490,7 @@
           - "✅ sing-box deployed"
           - "  host:     {{ inventory_hostname }}"
           - "  env:      {{ deployment_env }}"
-          - "  os/init:  {{ ansible_os_family | default('?') }} / {{ _init }}"
+          - "  os/init:  {{ ansible_facts['os_family'] | default('?') }} / {{ _init }}"
           - "  version:  {{ singbox_version }}"
           - "  arch:     {{ target_arch }} ({{ singbox_libc }})"
           - "  binary:   {{ singbox_bin }}"
