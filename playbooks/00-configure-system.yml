@@ -12,10 +12,40 @@
     system_timezone: "Asia/Shanghai"
 
   tasks:
-    - name: Install timezone database
-      package:
+    - name: Detect package manager
+      raw: |
+        if command -v apk >/dev/null 2>&1; then
+          echo alpine
+        elif command -v apt-get >/dev/null 2>&1; then
+          echo debian
+        else
+          echo unknown
+        fi
+      args:
+        executable: /bin/sh
+      register: _timezone_pkg_mgr
+      changed_when: false
+      failed_when: false
+
+    - name: Fail on unsupported package manager
+      fail:
+        msg: >-
+          ❌ 无法配置 {{ system_timezone }}：只支持 Alpine(apk) 或 Debian/Ubuntu(apt-get)，
+          检测结果={{ _timezone_pkg_mgr.stdout | default('') | trim }}。
+      when: (_timezone_pkg_mgr.stdout | default('') | trim) not in ['alpine', 'debian']
+
+    - name: Install timezone database (Alpine)
+      apk:
         name: tzdata
         state: present
+      when: (_timezone_pkg_mgr.stdout | default('') | trim) == 'alpine'
+
+    - name: Install timezone database (Debian)
+      apt:
+        name: tzdata
+        state: present
+        update_cache: true
+      when: (_timezone_pkg_mgr.stdout | default('') | trim) == 'debian'
 
     - name: Link system localtime
       file:
