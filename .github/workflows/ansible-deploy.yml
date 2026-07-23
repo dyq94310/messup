@@ -179,15 +179,26 @@ jobs:
           sed -i 's/^[[:space:]]*//' ~/.ssh/config
           chmod 600 ~/.ssh/config
 
-      - name: Install Ansible + sshpass
+      - name: Verify Ansible and install missing sshpass
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ansible sshpass
+          # ubuntu-latest already includes Ansible; do not replace the runner image version.
+          if ! command -v ansible >/dev/null 2>&1; then
+            echo "Ansible is missing; installing it as a fallback"
+            sudo apt-get update -qq
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ansible
+          fi
           ansible --version
-          # 密码 bootstrap 依赖 sshpass；GitHub runner 默认不带，必须装上并校验
+
+          # bootstrap_password requires sshpass. Install it only when the runner lacks it.
           if ! command -v sshpass >/dev/null 2>&1; then
-            echo "::error::sshpass 安装后仍不可用，bootstrap_password 将失败"
+            echo "sshpass is missing; installing it"
+            sudo apt-get update -qq
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq sshpass
+          fi
+
+          if ! command -v sshpass >/dev/null 2>&1; then
+            echo "::error::sshpass 不可用，bootstrap_password 将失败"
             exit 1
           fi
           sshpass -V 2>&1 || true
