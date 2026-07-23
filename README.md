@@ -79,7 +79,7 @@ messup-private/                      # 私有仓（本地/CI 注入为 private-c
 │   ├── inventory.ini
 │   └── group_vars/all.yml           # 版本号 + nft 默认参数
 ├── singbox/<env>/config.json.j2         # 统一模板，端口引用 singbox_ports
-├── singbox/port_profiles.yml            # 默认及特殊 NAT 端口映射
+├── singbox/port_profiles.json           # 默认及特殊 NAT 端口映射
 ├── ssh/public_keys/*.pub             # 额外个人电脑 SSH 公钥，下发到所有 all_nodes
 ├── smartdns/smartdns.conf           # 全局共用
 ├── nft/apply.sh                     # 唯一业务逻辑
@@ -190,7 +190,7 @@ cd messup
 
 ```bash
 # 1) 改私有配置
-vim ../messup-private/singbox/rear/config.json
+vim ../messup-private/singbox/rear/config.json.j2
 vim ../messup-private/smartdns/smartdns.conf
 
 # 2A) 推送私有仓 → 自动 CI 部署（对应服务）
@@ -222,7 +222,7 @@ git add -A && git commit -m "bump sing-box / update inventory" && git push
 
 ```bash
 mkdir -p singbox/node-b nft/node-b
-cp singbox/rear/config.json singbox/node-b/
+cp singbox/rear/config.json.j2 singbox/node-b/config.json.j2
 # smartdns 全局共用 smartdns/smartdns.conf，无需按节点复制
 # inventory/inventory.ini 增加一行（新机带临时密码即可自动装钥）:
 # 10.0.0.30 ansible_port=22 deployment_env=node-b bootstrap_password=面板初始密码
@@ -292,7 +292,7 @@ CI 顺序：`00-bootstrap-ssh`（密钥 / `bootstrap_password`）→ `check-conn
 
 ```bash
 # messup-private
-vim singbox/rear/config.json      # → tags=singbox，配置变了会 Restart singbox
+vim singbox/rear/config.json.j2    # → tags=singbox，配置变了会 Restart singbox
 vim smartdns/smartdns.conf         # → tags=smartdns（全局共用）
 vim nft/rear/mappings.txt         # → tags=nft（每次成功部署都会 re-apply）
 git add -A && git commit -m "update rear" && git push

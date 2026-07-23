@@ -23,7 +23,7 @@
     - name: Resolve private config paths
       set_fact:
         _singbox_cfg_src: "{{ private_config_temp }}/singbox/{{ deployment_env }}/config.json.j2"
-        _singbox_port_profiles_src: "{{ private_config_temp }}/singbox/port_profiles.yml"
+        _singbox_port_profiles_src: "{{ private_config_temp }}/singbox/port_profiles.json"
 
     - name: Load sing-box port profiles
       include_vars:
