@@ -78,7 +78,8 @@ messup-private/                      # 私有仓（本地/CI 注入为 private-c
 ├── inventory/
 │   ├── inventory.ini
 │   └── group_vars/all.yml           # 版本号 + nft 默认参数
-├── singbox/<env>/config.json
+├── singbox/<env>/config.json.j2         # 统一模板，端口引用 singbox_ports
+├── singbox/port_profiles.yml            # 默认及特殊 NAT 端口映射
 ├── ssh/public_keys/*.pub             # 额外个人电脑 SSH 公钥，下发到所有 all_nodes
 ├── smartdns/smartdns.conf           # 全局共用
 ├── nft/apply.sh                     # 唯一业务逻辑

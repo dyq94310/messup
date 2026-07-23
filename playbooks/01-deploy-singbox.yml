@@ -20,9 +20,46 @@
           请在 inventory 中设置，例如: deployment_env=rear
         success_msg: "deployment_env={{ deployment_env }}"
 
-    - name: Resolve private config path
+    - name: Resolve private config paths
       set_fact:
-        _singbox_cfg_src: "{{ private_config_temp }}/singbox/{{ deployment_env }}/config.json"
+        _singbox_cfg_src: "{{ private_config_temp }}/singbox/{{ deployment_env }}/config.json.j2"
+        _singbox_port_profiles_src: "{{ private_config_temp }}/singbox/port_profiles.yml"
+
+    - name: Load sing-box port profiles
+      include_vars:
+        file: "{{ _singbox_port_profiles_src }}"
+        name: _singbox_port_profile_vars
+      delegate_to: localhost
+      become: false
+
+    - name: Resolve sing-box port profile name
+      set_fact:
+        _singbox_selected_profile: "{{ singbox_port_profile | default('default') }}"
+
+    - name: Require sing-box port profile
+      assert:
+        that:
+          - _singbox_selected_profile in _singbox_port_profile_vars.singbox_port_profiles
+        fail_msg: >-
+          ❌ 找不到 sing-box 端口 profile={{ _singbox_selected_profile }}。
+          可用 profile: {{ _singbox_port_profile_vars.singbox_port_profiles.keys() | list }}
+
+    - name: Resolve sing-box ports
+      set_fact:
+        singbox_ports: "{{ _singbox_port_profile_vars.singbox_port_profiles[_singbox_selected_profile] }}"
+
+    - name: Validate sing-box ports
+      assert:
+        that:
+          - singbox_ports is mapping
+          - (singbox_ports.values() | list | unique | length) == (singbox_ports.values() | list | length)
+          - (singbox_ports.values() | list | select('number') | list | length) == (singbox_ports.values() | list | length)
+          - (singbox_ports.values() | list | select('ge', 1) | list | length) == (singbox_ports.values() | list | length)
+          - (singbox_ports.values() | list | select('le', 65535) | list | length) == (singbox_ports.values() | list | length)
+        fail_msg: >-
+          ❌ sing-box port profile={{ _singbox_selected_profile }} 无效：
+          端口必须是 1-65535 的整数且不能重复。
+        success_msg: "singbox_port_profile={{ _singbox_selected_profile }} ports={{ singbox_ports }}"
 
     - name: Ensure private config exists on control node
       stat:
@@ -40,7 +77,7 @@
           ❌ 找不到节点配置: {{ _singbox_cfg_src }}
           请确认:
             1) messup-private 已 checkout / 软链到 private-config
-            2) 存在 singbox/{{ deployment_env }}/config.json
+            2) 存在 singbox/{{ deployment_env }}/config.json.j2
             3) inventory 中 deployment_env 与目录名一致
             4) CI 是否设置 -e private_config_temp=...
 
@@ -198,8 +235,8 @@
           - _bin_stat.stat.executable
         fail_msg: "❌ sing-box 二进制不存在或不可执行: {{ singbox_bin }}"
 
-    - name: Deploy node-specific config from private repo
-      copy:
+    - name: Render node-specific config from private repo
+      template:
         src: "{{ _singbox_cfg_src }}"
         dest: "{{ singbox_config }}"
         mode: "0600"
