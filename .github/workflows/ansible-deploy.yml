@@ -145,15 +145,18 @@ jobs:
             EXTRA="$EXTRA --tags ${TAGS}"
           fi
 
+          if [ -n "${LIMIT:-}" ]; then
+            MODE="targeted-host-reconcile"
+          elif [ -n "${TAGS:-}" ]; then
+            MODE="service-wide"
+          else
+            MODE="full"
+          fi
+
           echo "extra=${EXTRA}" >> "$GITHUB_OUTPUT"
           echo "tags=${TAGS:-<all>}" >> "$GITHUB_OUTPUT"
           echo "limit=${LIMIT:-<all>}" >> "$GITHUB_OUTPUT"
-          {
-            echo "### Deploy scope"
-            echo "- event: \`${EVENT_NAME}\`"
-            echo "- tags: \`${TAGS:-all (bootstrap + smartdns + singbox)}\`"
-            echo "- limit: \`${LIMIT:-all hosts}\`"
-          } >> "$GITHUB_STEP_SUMMARY"
+          echo "mode=${MODE}" >> "$GITHUB_OUTPUT"
 
       - name: Setup SSH for Ansible → managed nodes (same id_ed25519_github)
         run: |
@@ -337,28 +340,27 @@ jobs:
       - name: Deploy finished
         if: success()
         run: |
-          echo "✅ Ansible deploy finished"
-          echo "Trigger: ${{ github.event_name }}"
-          echo "Tags: ${{ steps.detect.outputs.tags }}"
-          echo "Limit: ${{ steps.detect.outputs.limit }}"
-          echo "Unreachable skipped: ${{ steps.conn.outputs.unreachable_hosts }}"
-          {
-            echo ""
-            echo "### Result"
-            echo "✅ finished (unreachable hosts are warnings only, not hard fail)"
-            if [ -n "${{ steps.conn.outputs.unreachable_hosts }}" ]; then
-              echo ""
-              echo "⚠️ Skipped unreachable: \`${{ steps.conn.outputs.unreachable_hosts }}\`"
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
+          chmod +x scripts/render-deploy-summary.sh
+          TAGS="${{ steps.detect.outputs.tags }}" \
+          LIMIT="${{ steps.detect.outputs.limit }}" \
+          MODE="${{ steps.detect.outputs.mode }}" \
+          REACHABLE="${{ steps.conn.outputs.reachable_limit }}" \
+          UNREACHABLE="${{ steps.conn.outputs.unreachable_hosts }}" \
+          PLAYBOOK_RC="${{ steps.play.outputs.playbook_rc }}" \
+          EVENT_NAME="${{ github.event_name }}" \
+          ./scripts/render-deploy-summary.sh
 
       - name: Deploy failed
         if: failure()
         run: |
           echo "::error::Ansible deploy failed. 若全部主机不可达：检查密钥/端口；若单机任务失败：查看 playbook 日志。"
-          {
-            echo ""
-            echo "### Result"
-            echo "❌ failed"
-          } >> "$GITHUB_STEP_SUMMARY"
+          chmod +x scripts/render-deploy-summary.sh
+          TAGS="${{ steps.detect.outputs.tags }}" \
+          LIMIT="${{ steps.detect.outputs.limit }}" \
+          MODE="${{ steps.detect.outputs.mode }}" \
+          REACHABLE="${{ steps.conn.outputs.reachable_limit }}" \
+          UNREACHABLE="${{ steps.conn.outputs.unreachable_hosts }}" \
+          PLAYBOOK_RC="${{ steps.play.outputs.playbook_rc }}" \
+          EVENT_NAME="${{ github.event_name }}" \
+          ./scripts/render-deploy-summary.sh
           exit 1
