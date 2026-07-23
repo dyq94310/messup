@@ -154,30 +154,11 @@ jobs:
           sed -i 's/^[[:space:]]*//' ~/.ssh/config
           chmod 600 ~/.ssh/config
 
-      - name: Verify Ansible and install missing sshpass
+      - name: Verify runner tools
         run: |
           set -euo pipefail
-          # ubuntu-latest already includes Ansible; do not replace the runner image version.
-          if ! command -v ansible >/dev/null 2>&1; then
-            echo "Ansible is missing; installing it as a fallback"
-            sudo apt-get update -qq
-            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ansible
-          fi
           ansible --version
-
-          # bootstrap_password requires sshpass. Install it only when the runner lacks it.
-          if ! command -v sshpass >/dev/null 2>&1; then
-            echo "sshpass is missing; installing it"
-            sudo apt-get update -qq
-            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq sshpass
-          fi
-
-          if ! command -v sshpass >/dev/null 2>&1; then
-            echo "::error::sshpass 不可用，bootstrap_password 将失败"
-            exit 1
-          fi
-          sshpass -V 2>&1 || true
-          echo "sshpass: $(command -v sshpass)"
+          sshpass -V
 
       # 新机：inventory 的 bootstrap_password 在此装公钥（密钥优先）。须在连通性预检之前。
       - name: Bootstrap SSH (key or bootstrap_password)

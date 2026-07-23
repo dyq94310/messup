@@ -1,6 +1,6 @@
 ---
 # 首次 SSH 引导：优先密钥；密钥失败（或 inventory 含 bootstrap_password）时用密码装公钥。
-# 控制机依赖 sshpass（CI 会 apt 安装；本 playbook 也会检测并尝试补装）。
+# 密码引导依赖控制机预装的 sshpass（GitHub-hosted runner 已提供）。
 #
 # inventory 示例:
 #   10.0.0.30 ansible_port=22 deployment_env=node-b bootstrap_password=面板初始密码
@@ -139,68 +139,13 @@
       -o ControlPath=none
       -o ControlPersist=no
   tasks:
-    - name: Check sshpass on control node
-      shell: command -v sshpass
-      args:
-        executable: /bin/bash
+    - name: Verify sshpass on control node
+      command: sshpass -V
       delegate_to: localhost
       become: false
       run_once: true
       changed_when: false
-      failed_when: false
       register: sshpass_check
-
-    - name: Install sshpass on control node if missing
-      shell: |
-        set -e
-        if command -v sshpass >/dev/null 2>&1; then
-          echo __SSHPASS_OK__
-          exit 0
-        fi
-        if command -v apt-get >/dev/null 2>&1; then
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq sshpass
-        elif command -v apk >/dev/null 2>&1; then
-          sudo apk add --no-cache sshpass 2>/dev/null || apk add --no-cache sshpass
-        elif command -v dnf >/dev/null 2>&1; then
-          sudo dnf install -y sshpass
-        elif command -v yum >/dev/null 2>&1; then
-          sudo yum install -y sshpass
-        else
-          echo "unsupported package manager" >&2
-          exit 1
-        fi
-        command -v sshpass
-        echo __SSHPASS_INSTALLED__
-      args:
-        executable: /bin/bash
-      delegate_to: localhost
-      become: false
-      run_once: true
-      when: sshpass_check.rc | default(1) != 0
-      register: sshpass_install
-      failed_when: false
-      changed_when: >-
-        sshpass_install.stdout is defined and '__SSHPASS_INSTALLED__' in sshpass_install.stdout
-
-    - name: Re-check sshpass after optional install
-      shell: command -v sshpass
-      args:
-        executable: /bin/bash
-      delegate_to: localhost
-      become: false
-      run_once: true
-      changed_when: false
-      failed_when: false
-      register: sshpass_recheck
-
-    - name: Fail when sshpass still missing on control node
-      fail:
-        msg: >-
-          控制机未安装 sshpass，无法用 bootstrap_password 登录。
-          CI 应已 apt install sshpass；本地请执行: sudo apt-get install -y sshpass
-      run_once: true
-      when: sshpass_recheck.rc | default(1) != 0
 
     - name: Export public key for password install
       shell: ssh-keygen -y -f "{{ bootstrap_ssh_privkey }}"
