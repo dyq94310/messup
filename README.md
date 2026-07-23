@@ -47,6 +47,7 @@
 - OS 自动识别：Alpine → OpenRC + musl；Debian/Ubuntu → systemd + glibc（facts，无需 inventory 手写）
 - sing-box 证书目录默认 `/etc/cert`；inventory 必须用 `singbox_cert_source=true` 指定唯一证书源节点，新节点缺证书时由 Ansible 从源节点镜像同步
 - 仅配置变更时只重启服务；版本号变化时才重新下载二进制
+- 所有 `all_nodes` 默认配置为 `Asia/Shanghai`（UTC+08:00），可单独运行 `--tags timezone`
 
 ---
 
@@ -56,9 +57,10 @@
 messup/                              # 公开仓（无主机清单）
 ├── ansible.cfg                      # inventory → private-config/inventory/
 ├── playbooks/
-│   ├── site.yml                     # ssh bootstrap → python → smartdns → singbox → nft
+│   ├── site.yml                     # ssh bootstrap → python → timezone → smartdns → singbox → nft
 │   ├── 00-bootstrap-ssh.yml         # 密钥优先；bootstrap_password 密码装钥
 │   ├── 00-bootstrap-python.yml
+│   ├── 00-configure-system.yml      # 统一系统时区（Asia/Shanghai）
 │   ├── 01-deploy-singbox.yml
 │   ├── 02-deploy-smartdns.yml
 │   └── 03-deploy-nft.yml

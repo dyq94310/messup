@@ -1,0 +1,44 @@
+---
+# 基础系统配置：统一所有节点时区。
+# 只使用 ansible-core 内置模块，不依赖额外 collection。
+- name: Configure system timezone
+  hosts: all_nodes
+  gather_facts: true
+  become: false
+  ignore_unreachable: true
+  any_errors_fatal: false
+  tags: [system, timezone]
+  vars:
+    system_timezone: "Asia/Shanghai"
+
+  tasks:
+    - name: Install timezone database
+      package:
+        name: tzdata
+        state: present
+
+    - name: Link system localtime
+      file:
+        src: "/usr/share/zoneinfo/{{ system_timezone }}"
+        dest: /etc/localtime
+        state: link
+        force: true
+
+    - name: Write timezone name
+      copy:
+        content: "{{ system_timezone }}\n"
+        dest: /etc/timezone
+        mode: "0644"
+
+    - name: Show configured timezone
+      command: date +%Z
+      register: timezone_name
+      changed_when: false
+
+    - name: Show timezone summary
+      debug:
+        msg:
+          - "✅ System timezone configured"
+          - "  host:     {{ inventory_hostname }}"
+          - "  timezone: {{ system_timezone }}"
+          - "  current:  {{ timezone_name.stdout | default('n/a') | trim }}"

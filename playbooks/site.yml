@@ -1,5 +1,5 @@
 ---
-# 一键全量部署：SSH bootstrap → Python → SmartDNS → Sing-box → nft
+# 一键全量部署：SSH bootstrap → Python → system timezone → SmartDNS → Sing-box → nft
 # 用法:
 #   ansible-playbook playbooks/site.yml
 #   ansible-playbook playbooks/site.yml --limit 172.245.220.230
@@ -16,6 +16,10 @@
 - name: Import bootstrap
   import_playbook: 00-bootstrap-python.yml
   tags: [bootstrap, always]
+
+- name: Import system configuration
+  import_playbook: 00-configure-system.yml
+  tags: [system, timezone]
 
 - name: Import SmartDNS deploy
   import_playbook: 02-deploy-smartdns.yml
