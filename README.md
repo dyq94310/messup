@@ -49,6 +49,7 @@
 - 仅配置变更时只重启服务；版本号变化时才重新下载二进制
 - 所有 `all_nodes` 默认配置为 `Asia/Shanghai`（UTC+08:00），可单独运行 `--tags timezone`
 - inventory 第一列节点别名同时作为目标机系统 hostname；每台机器的 `/etc/hosts` 只维护自己的 `127.0.1.1 <节点别名>` 映射，不建立节点间互访记录，可单独运行 `--tags hostname,hosts`
+- 每台节点的 probe 安装命令保存在私有仓 `inventory/host_vars/<节点名>.yml`，可单独运行 `--tags probe --limit <节点名>`；命令 hash 保存在目标机本地，未变化时跳过执行
 
 ---
 
@@ -65,7 +66,8 @@ messup/                              # 公开仓（无主机清单）
 │   ├── 00-configure-hostname.yml    # inventory 别名、hostname、本机 /etc/hosts
 │   ├── 01-deploy-singbox.yml
 │   ├── 02-deploy-smartdns.yml
-│   └── 03-deploy-nft.yml
+│   ├── 03-deploy-nft.yml
+│   └── 04-deploy-probe.yml        # 按节点私有命令、hash 幂等部署 probe
 ├── templates/
 │   ├── singbox.openrc.j2 / singbox.service.j2
 │   ├── smartdns.openrc.j2 / smartdns.service.j2

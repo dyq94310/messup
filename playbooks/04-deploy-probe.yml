@@ -1,0 +1,83 @@
+---
+# Deploy a per-host probe command from private inventory host_vars.
+# The command itself is secret; only its SHA-256 is persisted on the node.
+- name: Deploy probe on managed nodes
+  hosts: all_nodes
+  gather_facts: false
+  become: false
+  ignore_unreachable: true
+  any_errors_fatal: false
+  tags: [probe]
+  vars:
+    probe_state_dir: /var/lib/messup
+    probe_state_file: "{{ probe_state_dir }}/probe-install-command.sha256"
+
+  tasks:
+    - name: Validate enabled probe configuration
+      ansible.builtin.assert:
+        that:
+          - probe_install_command is defined
+          - (probe_install_command | string | trim | length) > 0
+        fail_msg: >-
+          节点 {{ inventory_hostname }} 已启用 probe，但缺少非空
+          probe_install_command（请在 inventory/host_vars/{{ inventory_hostname }}.yml 配置）。
+      when: probe_enabled | default(false) | bool
+
+    - name: Ensure probe state directory exists
+      ansible.builtin.file:
+        path: "{{ probe_state_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+      when: probe_enabled | default(false) | bool
+
+    - name: Calculate desired probe command hash
+      ansible.builtin.set_fact:
+        probe_command_hash: "{{ probe_install_command | hash('sha256') }}"
+      when: probe_enabled | default(false) | bool
+      no_log: true
+
+    - name: Read installed probe command hash
+      ansible.builtin.slurp:
+        src: "{{ probe_state_file }}"
+      register: installed_probe_hash
+      failed_when: false
+      changed_when: false
+      when: probe_enabled | default(false) | bool
+      no_log: true
+
+    - name: Install or update probe from private command
+      ansible.builtin.shell: "{{ probe_install_command }}"
+      args:
+        executable: /bin/sh
+      register: probe_install
+      changed_when: true
+      when:
+        - probe_enabled | default(false) | bool
+        - >-
+          (installed_probe_hash.content | default('') | b64decode | trim)
+          != (probe_command_hash | string)
+      no_log: true
+
+    - name: Record probe command hash after successful install
+      ansible.builtin.copy:
+        content: "{{ probe_command_hash }}\n"
+        dest: "{{ probe_state_file }}"
+        owner: root
+        group: root
+        mode: "0600"
+      when:
+        - probe_enabled | default(false) | bool
+        - probe_install is changed
+      no_log: true
+
+    - name: Report probe deployment status
+      ansible.builtin.debug:
+        msg: >-
+          {% if probe_install is changed %}
+          probe installed or updated on {{ inventory_hostname }}
+          {% else %}
+          probe command unchanged on {{ inventory_hostname }}, skipped
+          {% endif %}
+      when: probe_enabled | default(false) | bool

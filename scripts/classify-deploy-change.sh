@@ -37,6 +37,7 @@ else
     need_sb=0
     need_sd=0
     need_nft=0
+    need_probe=0
     need_approval=0
     reasons=()
     while IFS= read -r file; do
@@ -48,6 +49,8 @@ else
           need_sd=1 ;;
         playbooks/03-deploy-nft.yml|templates/messup-nft.openrc.j2|templates/messup-nft.env.j2|templates/messup-nft.service.j2)
           need_nft=1 ;;
+        playbooks/04-deploy-probe.yml)
+          need_probe=1 ;;
         scripts/render-deploy-summary.sh)
           ;;
         README.md|*.md|**/*.md|LICENSE|.gitignore)
@@ -64,11 +67,12 @@ else
       APPROVAL_REQUIRED="true"
       DEPLOY_REQUIRED="true"
       REASON="unclassified or infrastructure change: $(IFS=,; printf '%s' "${reasons[*]}")"
-    elif [ "$need_sb" = "1" ] || [ "$need_sd" = "1" ] || [ "$need_nft" = "1" ]; then
+    elif [ "$need_sb" = "1" ] || [ "$need_sd" = "1" ] || [ "$need_nft" = "1" ] || [ "$need_probe" = "1" ]; then
       parts=()
       [ "$need_sb" = "1" ] && parts+=(singbox)
       [ "$need_sd" = "1" ] && parts+=(smartdns)
       [ "$need_nft" = "1" ] && parts+=(nft)
+      [ "$need_probe" = "1" ] && parts+=(probe)
       TAGS=$(IFS=,; printf '%s' "${parts[*]}")
       MODE="service-wide"
       DEPLOY_REQUIRED="true"

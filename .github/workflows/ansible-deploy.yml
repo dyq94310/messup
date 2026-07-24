@@ -20,7 +20,7 @@ on:
         required: false
         default: ""
       tags:
-        description: "可选：Ansible tags（bootstrap_ssh,bootstrap,smartdns,singbox,nft），留空=自动/全部"
+        description: "可选：Ansible tags（bootstrap_ssh,bootstrap,smartdns,singbox,nft,probe），留空=自动/全部"
         required: false
         default: ""
 

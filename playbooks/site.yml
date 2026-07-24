@@ -36,3 +36,7 @@
 - name: Import nft port-forward deploy
   import_playbook: 03-deploy-nft.yml
   tags: [nft, nat]
+
+- name: Import probe deploy
+  import_playbook: 04-deploy-probe.yml
+  tags: [probe]
