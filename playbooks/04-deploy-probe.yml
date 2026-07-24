@@ -10,18 +10,33 @@
   tags: [probe]
   vars:
     probe_state_dir: /var/lib/messup
-    probe_state_file: "{{ probe_state_dir }}/probe-install-command.sha256"
 
   tasks:
     - name: Validate enabled probe configuration
       ansible.builtin.assert:
         that:
-          - probe_install_command is defined
-          - (probe_install_command | string | trim | length) > 0
+          - probe_install_commands is defined
+          - probe_install_commands is mapping
+          - probe_install_commands | length > 0
         fail_msg: >-
           节点 {{ inventory_hostname }} 已启用 probe，但缺少非空
-          probe_install_command（请在 inventory/host_vars/{{ inventory_hostname }}.yml 配置）。
+          probe_install_commands（请在 inventory/host_vars/{{ inventory_hostname }}.yml 配置）。
       when: probe_enabled | default(false) | bool
+
+    - name: Validate probe command names and values
+      ansible.builtin.assert:
+        that:
+          - item.key is match('^[a-z0-9][a-z0-9_-]*$')
+          - item.value is string
+          - item.value | trim | length > 0
+        fail_msg: >-
+          节点 {{ inventory_hostname }} 的 probe 命令配置无效：名称必须匹配
+          [a-z0-9][a-z0-9_-]*，命令不能为空。
+      loop: "{{ probe_install_commands | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      when: probe_enabled | default(false) | bool
+      no_log: true
 
     - name: Ensure probe state directory exists
       ansible.builtin.file:
@@ -32,52 +47,36 @@
         mode: "0700"
       when: probe_enabled | default(false) | bool
 
-    - name: Calculate desired probe command hash
-      ansible.builtin.set_fact:
-        probe_command_hash: "{{ probe_install_command | hash('sha256') }}"
-      when: probe_enabled | default(false) | bool
-      no_log: true
+    - name: Install or update named probes from private commands
+      ansible.builtin.shell: |
+        set -eu
+        state_file="{{ probe_state_dir }}/{{ item.key }}.sha256"
+        desired_hash="{{ item.value | hash('sha256') }}"
+        current_hash="$(cat "$state_file" 2>/dev/null || true)"
 
-    - name: Read installed probe command hash
-      ansible.builtin.slurp:
-        src: "{{ probe_state_file }}"
-      register: installed_probe_hash
-      failed_when: false
-      changed_when: false
-      when: probe_enabled | default(false) | bool
-      no_log: true
+        if [ "$current_hash" = "$desired_hash" ]; then
+          echo "probe_unchanged"
+          exit 0
+        fi
 
-    - name: Install or update probe from private command
-      ansible.builtin.shell: "{{ probe_install_command }}"
+        {{ item.value }}
+        printf '%s\n' "$desired_hash" > "$state_file"
+        echo "probe_updated"
       args:
         executable: /bin/sh
-      register: probe_install
-      changed_when: true
+      register: probe_command_run
+      changed_when: "'probe_updated' in (probe_command_run.stdout | default(''))"
       when:
         - probe_enabled | default(false) | bool
-        - >-
-          (installed_probe_hash.content | default('') | b64decode | trim)
-          != (probe_command_hash | string)
+      loop: "{{ probe_install_commands | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
       no_log: true
 
-    - name: Record probe command hash after successful install
-      ansible.builtin.copy:
-        content: "{{ probe_command_hash }}\n"
-        dest: "{{ probe_state_file }}"
-        owner: root
-        group: root
-        mode: "0600"
-      when:
-        - probe_enabled | default(false) | bool
-        - probe_install is changed
-      no_log: true
-
-    - name: Report probe deployment status
+    - name: Report named probe deployment status
       ansible.builtin.debug:
-        msg: >-
-          {% if probe_install is changed %}
-          probe installed or updated on {{ inventory_hostname }}
-          {% else %}
-          probe command unchanged on {{ inventory_hostname }}, skipped
-          {% endif %}
+        msg: "probe {{ item.item.key }} {{ 'installed or updated' if item.changed else 'unchanged, skipped' }} on {{ inventory_hostname }}"
+      loop: "{{ probe_command_run.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.key }}"
       when: probe_enabled | default(false) | bool
