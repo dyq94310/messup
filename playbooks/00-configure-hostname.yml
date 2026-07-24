@@ -17,6 +17,7 @@
         owner: root
         group: root
         mode: "0644"
+        unsafe_writes: true
       tags: [hostname]
 
     - name: Try to set current runtime hostname
@@ -39,6 +40,7 @@
         owner: root
         group: root
         mode: "0644"
+        unsafe_writes: true
       tags: [hosts]
 
     - name: Read configured system hostname
@@ -62,7 +64,7 @@
         argv:
           - grep
           - -Eq
-          - "^127\\.0\\.1[[:space:]]+{{ inventory_hostname | regex_escape }}([[:space:]]|$)"
+          - "^127\\.0\\.1\\.1[[:space:]]+{{ inventory_hostname | regex_escape }}([[:space:]]|$)"
           - /etc/hosts
       changed_when: false
       tags: [hosts]
