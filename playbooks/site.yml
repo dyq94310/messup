@@ -21,6 +21,10 @@
   import_playbook: 00-configure-system.yml
   tags: [system, timezone]
 
+- name: Import hostname configuration
+  import_playbook: 00-configure-hostname.yml
+  tags: [system, hostname, hosts]
+
 - name: Import SmartDNS deploy
   import_playbook: 02-deploy-smartdns.yml
   tags: [smartdns, dns]

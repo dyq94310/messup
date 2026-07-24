@@ -1,0 +1,63 @@
+---
+# 将 inventory 别名作为系统 hostname，并仅维护本机 /etc/hosts 映射。
+# 不写入其他节点，节点间仍不依赖 /etc/hosts 互访。
+- name: Configure system hostname and local hosts entry
+  hosts: all_nodes
+  gather_facts: false
+  become: false
+  ignore_unreachable: true
+  any_errors_fatal: false
+  tags: [system, hostname, hosts]
+
+  tasks:
+    - name: Set system hostname from inventory alias
+      ansible.builtin.hostname:
+        name: "{{ inventory_hostname }}"
+        use: generic
+      tags: [hostname]
+
+    - name: Manage local inventory alias in /etc/hosts
+      ansible.builtin.blockinfile:
+        path: /etc/hosts
+        create: true
+        marker: "# {mark} ANSIBLE MANAGED NODE ALIAS"
+        block: |-
+          127.0.1.1 {{ inventory_hostname }}
+        owner: root
+        group: root
+        mode: "0644"
+      tags: [hosts]
+
+    - name: Read configured system hostname
+      ansible.builtin.command: hostname
+      register: configured_hostname
+      changed_when: false
+      tags: [hostname]
+
+    - name: Verify system hostname matches inventory alias
+      ansible.builtin.assert:
+        that:
+          - (configured_hostname.stdout | trim) == inventory_hostname
+        fail_msg: >-
+          系统 hostname 不匹配：期望 {{ inventory_hostname }}，
+          实际 {{ configured_hostname.stdout | default('') | trim }}。
+      tags: [hostname]
+
+    - name: Verify local hosts entry matches inventory alias
+      ansible.builtin.command:
+        argv:
+          - grep
+          - -Eq
+          - "^127\\.0\\.1[[:space:]]+{{ inventory_hostname | regex_escape }}([[:space:]]|$)"
+          - /etc/hosts
+      changed_when: false
+      tags: [hosts]
+
+    - name: Show hostname configuration summary
+      ansible.builtin.debug:
+        msg:
+          - "✅ Hostname and local hosts entry configured"
+          - "  node:     {{ inventory_hostname }}"
+          - "  hostname: {{ configured_hostname.stdout | default('n/a') | trim }}"
+          - "  hosts:    127.0.1.1 {{ inventory_hostname }}"
+      tags: [hostname, hosts]

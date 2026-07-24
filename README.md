@@ -48,6 +48,7 @@
 - sing-box 证书目录默认 `/etc/cert`；inventory 必须用 `singbox_cert_source=true` 指定唯一证书源节点，新节点缺证书时由 Ansible 从源节点镜像同步
 - 仅配置变更时只重启服务；版本号变化时才重新下载二进制
 - 所有 `all_nodes` 默认配置为 `Asia/Shanghai`（UTC+08:00），可单独运行 `--tags timezone`
+- inventory 第一列节点别名同时作为目标机系统 hostname；每台机器的 `/etc/hosts` 只维护自己的 `127.0.1.1 <节点别名>` 映射，不建立节点间互访记录，可单独运行 `--tags hostname,hosts`
 
 ---
 
@@ -57,10 +58,11 @@
 messup/                              # 公开仓（无主机清单）
 ├── ansible.cfg                      # inventory → private-config/inventory/
 ├── playbooks/
-│   ├── site.yml                     # ssh bootstrap → python → timezone → smartdns → singbox → nft
+│   ├── site.yml                     # ssh bootstrap → python → system → hostname/hosts → services
 │   ├── 00-bootstrap-ssh.yml         # 密钥优先；bootstrap_password 密码装钥
 │   ├── 00-bootstrap-python.yml
 │   ├── 00-configure-system.yml      # 统一系统时区（Asia/Shanghai）
+│   ├── 00-configure-hostname.yml    # inventory 别名、hostname、本机 /etc/hosts
 │   ├── 01-deploy-singbox.yml
 │   ├── 02-deploy-smartdns.yml
 │   └── 03-deploy-nft.yml
