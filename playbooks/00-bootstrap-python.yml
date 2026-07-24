@@ -34,6 +34,19 @@
           主机: {{ inventory_hostname }}
       when: os_check.rc is defined and (os_check.rc != 0 or 'unknown' in (os_check.stdout | default('')))
 
+    - name: Check Alpine Python dependencies
+      raw: |
+        python3_ok=0
+        ca_certificates_ok=0
+        command -v python3 >/dev/null 2>&1 && python3_ok=1
+        apk info -e ca-certificates >/dev/null 2>&1 && ca_certificates_ok=1
+        echo "python3_ok=${python3_ok} ca_certificates_ok=${ca_certificates_ok}"
+      args:
+        executable: /bin/sh
+      register: alpine_dependencies
+      changed_when: false
+      when: "'alpine' in (os_check.stdout | default(''))"
+
     - name: "[Alpine] Install Python3 + ca-certificates via raw"
       raw: |
         set -e
@@ -41,14 +54,27 @@
         apk add --no-cache python3 ca-certificates
       args:
         executable: /bin/sh
-      when: "'alpine' in (os_check.stdout | default(''))"
       register: alpine_py
-      changed_when: >-
-        alpine_py.stdout is defined and (
-          'Installing' in alpine_py.stdout or
-          'OK:' in alpine_py.stdout or
-          'Upgrading' in alpine_py.stdout
-        )
+      changed_when: true
+      when: >-
+        'alpine' in (os_check.stdout | default('')) and
+        ('python3_ok=0' in (alpine_dependencies.stdout | default('')) or
+         'ca_certificates_ok=0' in (alpine_dependencies.stdout | default('')))
+
+    - name: Check Debian Python dependencies
+      raw: |
+        python3_ok=0
+        python3_apt_ok=0
+        ca_certificates_ok=0
+        command -v python3 >/dev/null 2>&1 && python3_ok=1
+        dpkg-query -W -f='${Status}' python3-apt 2>/dev/null | grep -q 'install ok installed' && python3_apt_ok=1
+        dpkg-query -W -f='${Status}' ca-certificates 2>/dev/null | grep -q 'install ok installed' && ca_certificates_ok=1
+        echo "python3_ok=${python3_ok} python3_apt_ok=${python3_apt_ok} ca_certificates_ok=${ca_certificates_ok}"
+      args:
+        executable: /bin/bash
+      register: debian_dependencies
+      changed_when: false
+      when: "'debian' in (os_check.stdout | default(''))"
 
     - name: "[Debian] Install Python3 + python3-apt via raw"
       raw: |
@@ -58,13 +84,13 @@
         DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-apt ca-certificates
       args:
         executable: /bin/bash
-      when: "'debian' in (os_check.stdout | default(''))"
+      when: >-
+        'debian' in (os_check.stdout | default('')) and
+        ('python3_ok=0' in (debian_dependencies.stdout | default('')) or
+         'python3_apt_ok=0' in (debian_dependencies.stdout | default('')) or
+         'ca_certificates_ok=0' in (debian_dependencies.stdout | default('')))
       register: debian_py
-      changed_when: >-
-        debian_py.stdout is defined and (
-          'Setting up' in debian_py.stdout or
-          'Unpacking' in debian_py.stdout
-        )
+      changed_when: true
 
     - name: Brief settle after package install
       pause:
