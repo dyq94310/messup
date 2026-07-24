@@ -3,7 +3,7 @@
 # 用法:
 #   ./scripts/deploy.sh
 #   ./scripts/deploy.sh --tags singbox
-#   ./scripts/deploy.sh --limit 172.245.220.230
+#   ./scripts/deploy.sh --limit node-name
 #   ./scripts/deploy.sh --tags smartdns --limit rear-host
 set -euo pipefail
 

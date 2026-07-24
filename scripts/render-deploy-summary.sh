@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Render a human-readable per-host deployment matrix for GitHub Actions.
+# The first inventory field is always the display name; ansible_host remains
+# an internal connection variable and is never intentionally rendered here.
 set -euo pipefail
 
 INVENTORY="${INVENTORY:-private-config/inventory/inventory.ini}"
@@ -36,6 +38,9 @@ csv_from_section() {
   ' "$INVENTORY"
 }
 
+# Inventory hostnames are the values Ansible prints in normal task output.
+# Ignore comments and group vars so summaries remain alias-based for both the
+# old IP inventory and the current alias + ansible_host format.
 managed_hosts=$(awk '
   /^\[(lxc_nodes|kvm_nodes)\]$/ { active=1; next }
   /^\[/ { active=0 }

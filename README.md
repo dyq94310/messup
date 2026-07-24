@@ -204,7 +204,7 @@ cd ../messup
 ./scripts/deploy.sh
 ./scripts/deploy.sh --tags singbox
 ./scripts/deploy.sh --tags smartdns
-./scripts/deploy.sh --limit 172.245.220.230
+./scripts/deploy.sh --limit test
 ```
 
 ### 改版本号 / inventory
@@ -213,7 +213,7 @@ cd ../messup
 # 均在 messup-private
 cd messup-private
 vim inventory/group_vars/all.yml   # singbox_version / smartdns_version
-vim inventory/inventory.ini        # 主机 IP / 端口 / deployment_env
+vim inventory/inventory.ini        # 节点别名 / ansible_host / 端口 / deployment_env
 git add -A && git commit -m "bump sing-box / update inventory" && git push
 # → repository_dispatch → messup Ansible Deploy
 ```
@@ -234,7 +234,7 @@ git add -A && git commit -m "add node-b" && git push
 # 成功后再 commit：删除 bootstrap_password=...
 ```
 
-本地：`./scripts/deploy.sh --limit 10.0.0.30`（需 `sshpass` + `~/.ssh/id_ed25519_github`）。
+本地：`./scripts/deploy.sh --limit node-name`（需 `sshpass` + `~/.ssh/id_ed25519_github`）。
 
 ---
 
@@ -286,7 +286,7 @@ CI 顺序：`00-bootstrap-ssh`（密钥 / `bootstrap_password`）→ `check-conn
 |------|------|
 | 改配置并生效 | 改 private 配置 → push（或本地 `deploy.sh`）→ 对应 tags 部署；**文件内容有变更** 时 handler 会 restart |
 | 只重启、不改配置 | SSH 用 OpenRC / systemctl，或本机 Ansible ad-hoc（见下） |
-| 只动一台 | SSH 该机，或 `--limit <IP>` |
+| 只动一台 | SSH 该机，或 `--limit <节点名>` |
 
 > 配置未变时再跑 playbook **通常不会**强制重启（只保证 `started`）。**没有**单独的「强制 restart」CI；纯重启用节点上的 init 命令 / ad-hoc 即可。
 
@@ -298,7 +298,7 @@ vim singbox/rear/config.json.j2    # → tags=singbox，配置变了会 Restart 
 vim smartdns/smartdns.conf         # → tags=smartdns（全局共用）
 vim nft/rear/mappings.txt         # → tags=nft（每次成功部署都会 re-apply）
 git add -A && git commit -m "update rear" && git push
-# 或本地: cd messup && ./scripts/deploy.sh --tags singbox --limit <IP>
+# 或本地: cd messup && ./scripts/deploy.sh --tags singbox --limit <节点名>
 ```
 
 ### 纯重启（最快）
@@ -326,7 +326,7 @@ ansible singbox_nodes -m service -a "name=singbox state=restarted"
 ansible smartdns_nodes -m service -a "name=smartdns state=restarted"
 ansible nft_nodes -m service -a "name=messup-nft state=restarted"
 # 单机
-ansible singbox_nodes -m service -a "name=singbox state=restarted" --limit 172.245.220.230
+ansible singbox_nodes -m service -a "name=singbox state=restarted" --limit test
 ```
 
 ### 状态 / 校验

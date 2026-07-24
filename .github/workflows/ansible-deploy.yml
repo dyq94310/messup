@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       limit:
-        description: "可选：限制目标 host（inventory 中的 host/IP），留空=全部"
+        description: "可选：限制目标节点别名（inventory 中的 host），留空=全部"
         required: false
         default: ""
       tags:

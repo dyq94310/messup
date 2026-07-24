@@ -2,7 +2,7 @@
 # 一键全量部署：SSH bootstrap → Python → system timezone → SmartDNS → Sing-box → nft
 # 用法:
 #   ansible-playbook playbooks/site.yml
-#   ansible-playbook playbooks/site.yml --limit 172.245.220.230
+#   ansible-playbook playbooks/site.yml --limit <节点名>
 #   ansible-playbook playbooks/site.yml --tags singbox
 #   ansible-playbook playbooks/site.yml --tags smartdns
 #   ansible-playbook playbooks/site.yml --tags nft
