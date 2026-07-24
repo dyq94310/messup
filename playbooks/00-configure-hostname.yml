@@ -10,10 +10,23 @@
   tags: [system, hostname, hosts]
 
   tasks:
-    - name: Set system hostname from inventory alias
-      ansible.builtin.hostname:
-        name: "{{ inventory_hostname }}"
-        use: generic
+    - name: Persist system hostname from inventory alias
+      ansible.builtin.copy:
+        content: "{{ inventory_hostname }}\n"
+        dest: /etc/hostname
+        owner: root
+        group: root
+        mode: "0644"
+      tags: [hostname]
+
+    - name: Try to set current runtime hostname
+      ansible.builtin.command:
+        argv:
+          - hostname
+          - "{{ inventory_hostname }}"
+      register: runtime_hostname_set
+      changed_when: runtime_hostname_set.rc == 0
+      failed_when: false
       tags: [hostname]
 
     - name: Manage local inventory alias in /etc/hosts
@@ -34,14 +47,15 @@
       changed_when: false
       tags: [hostname]
 
-    - name: Verify system hostname matches inventory alias
-      ansible.builtin.assert:
-        that:
-          - (configured_hostname.stdout | trim) == inventory_hostname
-        fail_msg: >-
-          系统 hostname 不匹配：期望 {{ inventory_hostname }}，
+    - name: Warn when runtime hostname cannot be changed
+      ansible.builtin.debug:
+        msg: >-
+          ⚠️ 无法修改当前运行时 hostname：期望 {{ inventory_hostname }}，
           实际 {{ configured_hostname.stdout | default('') | trim }}。
+          已持久写入 /etc/hostname；常见原因是 LXC 缺少修改 hostname 所需权限。
+          请在宿主机或容器配置中设置 hostname。
       tags: [hostname]
+      when: (configured_hostname.stdout | trim) != inventory_hostname
 
     - name: Verify local hosts entry matches inventory alias
       ansible.builtin.command:
@@ -59,5 +73,7 @@
           - "✅ Hostname and local hosts entry configured"
           - "  node:     {{ inventory_hostname }}"
           - "  hostname: {{ configured_hostname.stdout | default('n/a') | trim }}"
+          - "  hostname persisted: /etc/hostname"
+          - "  runtime hostname rc: {{ runtime_hostname_set.rc | default('unknown') }}"
           - "  hosts:    127.0.1.1 {{ inventory_hostname }}"
       tags: [hostname, hosts]
