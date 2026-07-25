@@ -45,12 +45,12 @@ ansible "${GROUP}" \
   "${KEY_ARGS[@]}" \
   "${LIMIT_ARGS[@]}" \
   -m raw -a 'echo __SSH_OK__' \
-  -o 2>&1 | tee "$TMP"
+  >"$TMP" 2>&1
 set -e
 
-# 解析 ansible -o 输出
-# 成功: 1.2.3.4 | CHANGED | rc=0 | (stdout) __SSH_OK__
-# 不可达: 1.2.3.4 | UNREACHABLE! => {...}
+# 解析 Ansible 输出。原始 SSH/Ansible 输出只保存在临时文件，不写入流水线日志。
+# 成功: host | CHANGED | rc=0 >>
+# 不可达: host | UNREACHABLE! => {...}
 host_field() { cut -d'|' -f1 | sed 's/[[:space:]]*$//;s/^[[:space:]]*//' | grep -v '^$' | sort -u; }
 
 mapfile -t REACHABLE < <(grep -E '\| (CHANGED|SUCCESS)' "$TMP" | host_field || true)
