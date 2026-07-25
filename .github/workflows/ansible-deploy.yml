@@ -117,19 +117,6 @@ jobs:
           path: private-config
           ref: main
 
-      - name: List private config tree
-        run: |
-          echo "== private-config =="
-          find private-config -type f ! -path '*/.git/*' | sort || true
-          test -d private-config/singbox || {
-            echo "::error::private-config/singbox 不存在；检查 id_ed25519_github 是否已加入 messup-private Deploy keys"
-            exit 1
-          }
-          test -f private-config/smartdns/smartdns.conf || {
-            echo "::error::private-config/smartdns/smartdns.conf 不存在（全局共用配置）"
-            exit 1
-          }
-
       - name: Setup SSH for Ansible → managed nodes (same id_ed25519_github)
         run: |
           set -euo pipefail
