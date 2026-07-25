@@ -3,6 +3,9 @@ name: Clear Action History
 on:
     workflow_dispatch: # 支持在 GitHub 界面手动触发
 
+permissions:
+    actions: write
+
 jobs:
     del_runs:
         runs-on: ubuntu-latest
