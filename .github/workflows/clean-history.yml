@@ -1,0 +1,16 @@
+name: Clear Action History
+
+on:
+    workflow_dispatch: # 支持在 GitHub 界面手动触发
+
+jobs:
+    del_runs:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Delete workflow runs
+              uses: Mattraks/delete-workflow-runs@v2
+              with:
+                  token: ${{ secrets.GITHUB_TOKEN }}
+                  repository: ${{ github.repository }}
+                  retain_days: 0 # 保留天数，设为 0 表示全部删除
+                  keep_minimum_runs: 0 # 最少保留次数，设为 0 表示不保留
