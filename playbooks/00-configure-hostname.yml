@@ -20,6 +20,13 @@
         unsafe_writes: true
       tags: [hostname]
 
+    - name: Read current runtime hostname
+      ansible.builtin.command: hostname
+      register: current_runtime_hostname
+      changed_when: false
+      failed_when: false
+      tags: [hostname]
+
     - name: Try to set current runtime hostname
       ansible.builtin.command:
         argv:
@@ -28,6 +35,7 @@
       register: runtime_hostname_set
       changed_when: runtime_hostname_set.rc == 0
       failed_when: false
+      when: (current_runtime_hostname.stdout | default('') | trim) != inventory_hostname
       tags: [hostname]
 
     - name: Manage local inventory alias in /etc/hosts
