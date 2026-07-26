@@ -1,6 +1,5 @@
 ---
-# 一键服务部署：Python → system timezone → SmartDNS → Sing-box → nft
-# SSH bootstrap 由 scripts/deploy.sh 和 CI 在本 playbook 之前独立执行。
+# 一键全量部署：SSH bootstrap → Python → system timezone → SmartDNS → Sing-box → nft → probe
 # 用法:
 #   ansible-playbook playbooks/site.yml
 #   ansible-playbook playbooks/site.yml --limit <节点名>
@@ -9,7 +8,10 @@
 #   ansible-playbook playbooks/site.yml --tags nft
 #   ansible-playbook playbooks/site.yml --tags singbox,smartdns,nft
 # 新机可在 inventory 写 bootstrap_password；密钥优先，失败再用密码装公钥。
-# 直接调用本文件时，先运行 playbooks/00-bootstrap-ssh.yml。
+
+- name: Import SSH bootstrap (key or bootstrap_password)
+  import_playbook: 00-bootstrap-ssh.yml
+  tags: [bootstrap_ssh, bootstrap, always]
 
 - name: Import bootstrap
   import_playbook: 00-bootstrap-python.yml
