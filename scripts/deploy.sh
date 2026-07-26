@@ -73,7 +73,7 @@ if [ "${SKIP_CONN_CHECK:-0}" != "1" ]; then
     "$ROOT/scripts/check-connectivity.sh" || exit 1
 fi
 
-# 3) 全量 site（内含幂等 SSH bootstrap + python + 业务）
+# 3) 服务 site（SSH bootstrap 已在前一步完成）
 echo "==> ansible-playbook playbooks/site.yml $*"
 set +e
 ansible-playbook playbooks/site.yml \
