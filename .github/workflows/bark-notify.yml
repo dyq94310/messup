@@ -5,18 +5,28 @@ on:
     workflows: ["Ansible Deploy"]
     types: [completed]
 
-permissions: {}
+permissions:
+  actions: read
 
 jobs:
   notify:
     name: Send build result to Bark
     runs-on: ubuntu-latest
     steps:
+      - name: Download build summary
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+          pattern: bark-summary-*
+          merge-multiple: true
+
       - name: Send notification
         env:
           BARK_WEBHOOK_URL: ${{ secrets.BARK_WEBHOOK_URL }}
           RESULT: ${{ github.event.workflow_run.conclusion }}
-          RUN_URL: ${{ github.event.workflow_run.html_url }}
           REPOSITORY: ${{ github.repository }}
           WORKFLOW: ${{ github.event.workflow_run.name }}
           BRANCH: ${{ github.event.workflow_run.head_branch }}
@@ -31,7 +41,17 @@ jobs:
 
           short_sha="${SHA:0:7}"
           title="${REPOSITORY}: ${RESULT}"
-          body="${WORKFLOW} | ${BRANCH} | ${short_sha}"
+          summary=""
+          if [ -s bark-summary-deploy.txt ]; then
+            summary=$(<bark-summary-deploy.txt)
+          elif [ -s bark-summary-detect.txt ]; then
+            summary=$(<bark-summary-detect.txt)
+          fi
+          if [ -z "${summary}" ]; then
+            summary="摘要未生成"
+          fi
+
+          body="${WORKFLOW} | ${BRANCH} | ${short_sha}"$'\n'"${summary}"
           level="active"
           if [ "${RESULT}" = "success" ]; then
             level="passive"
@@ -40,13 +60,11 @@ jobs:
           payload=$(jq -n \
             --arg title "${title}" \
             --arg body "${body}" \
-            --arg url "${RUN_URL}" \
             --arg group "GitHub CI" \
             --arg level "${level}" \
             '{
               title: $title,
               body: $body,
-              url: $url,
               group: $group,
               level: $level
             }')

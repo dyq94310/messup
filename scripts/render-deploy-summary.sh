@@ -13,6 +13,7 @@ PLAYBOOK_RC="${PLAYBOOK_RC:-}"
 MODE="${MODE:-}"
 EVENT_NAME="${EVENT_NAME:-}"
 SUMMARY="${GITHUB_STEP_SUMMARY:-}"
+BARK_SUMMARY_FILE="${BARK_SUMMARY_FILE:-}"
 
 if [ -z "$SUMMARY" ]; then
   echo "GITHUB_STEP_SUMMARY is required" >&2
@@ -203,3 +204,14 @@ fi
   echo ""
   echo "</details>"
 } >> "$SUMMARY"
+
+if [ -n "$BARK_SUMMARY_FILE" ]; then
+  {
+    echo "结果: ${result_text}"
+    echo "部署模式: ${deploy_mode}"
+    echo "目标节点: ${target_count} 台"
+    echo "服务: ${service_scope}"
+    echo "不可达节点: ${UNREACHABLE:-none}"
+    echo "触发事件: ${EVENT_NAME:-unknown}"
+  } > "$BARK_SUMMARY_FILE"
+fi

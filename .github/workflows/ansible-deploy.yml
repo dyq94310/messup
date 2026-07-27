@@ -83,6 +83,33 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Prepare Bark summary
+        if: always()
+        env:
+          TAGS: ${{ steps.classify.outputs.tags }}
+          LIMIT: ${{ steps.classify.outputs.limit }}
+          MODE: ${{ steps.classify.outputs.mode }}
+          DEPLOY_REQUIRED: ${{ steps.classify.outputs.deploy_required }}
+          APPROVAL_REQUIRED: ${{ steps.classify.outputs.approval_required }}
+          REASON: ${{ steps.classify.outputs.reason }}
+        run: |
+          {
+            echo "部署决策: ${DEPLOY_REQUIRED:-unknown}"
+            echo "审批要求: ${APPROVAL_REQUIRED:-unknown}"
+            echo "部署模式: ${MODE:-unknown}"
+            echo "服务: ${TAGS:-all}"
+            echo "目标节点: ${LIMIT:-all}"
+            echo "原因: ${REASON:-unknown}"
+          } > bark-summary-detect.txt
+
+      - name: Upload Bark decision summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bark-summary-detect
+          path: bark-summary-detect.txt
+          if-no-files-found: ignore
+
   deploy:
     name: Deploy to managed nodes
     needs: detect
@@ -91,6 +118,8 @@ jobs:
       name: ${{ needs.detect.outputs.approval_required == 'true' && 'production' || 'auto-deploy' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      BARK_SUMMARY_FILE: ${{ github.workspace }}/bark-summary-deploy.txt
 
     steps:
       - name: Checkout public playbooks (messup)
@@ -308,3 +337,11 @@ jobs:
           EVENT_NAME="${{ github.event_name }}" \
           ./scripts/render-deploy-summary.sh
           exit 1
+
+      - name: Upload Bark deployment summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bark-summary-deploy
+          path: ${{ env.BARK_SUMMARY_FILE }}
+          if-no-files-found: ignore
