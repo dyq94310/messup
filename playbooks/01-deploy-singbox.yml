@@ -47,22 +47,6 @@
     - name: Resolve sing-box ports
       set_fact:
         singbox_ports: "{{ _singbox_port_profile_vars.singbox_port_profiles[_singbox_selected_profile] }}"
-        _singbox_tcp_ports: >-
-          {{
-            (_singbox_port_profile_vars.singbox_port_profiles[_singbox_selected_profile]
-              | dict2items
-              | selectattr('key', 'in', ['snell', 'trojan', 'ss'])
-              | map(attribute='value')
-              | list)
-          }}
-        _singbox_udp_ports: >-
-          {{
-            (_singbox_port_profile_vars.singbox_port_profiles[_singbox_selected_profile]
-              | dict2items
-              | selectattr('key', 'in', ['hy2', 'ss'])
-              | map(attribute='value')
-              | list)
-          }}
 
     - name: Validate sing-box ports
       assert:
@@ -75,12 +59,9 @@
               | select('ge', 1)
               | select('le', 65535)
               | list | length) == (singbox_ports.values() | list | length)
-          - (_singbox_tcp_ports | unique | length) == (_singbox_tcp_ports | length)
-          - (_singbox_udp_ports | unique | length) == (_singbox_udp_ports | length)
         fail_msg: >-
           ❌ sing-box port profile={{ _singbox_selected_profile }} 无效：
-          端口必须是 1-65535 的整数；同一传输层（TCP 或 UDP）端口不能重复，
-          允许 TCP 与 UDP 使用相同端口。
+          端口必须是 1-65535 的整数。
         success_msg: "singbox_port_profile={{ _singbox_selected_profile }} ports={{ singbox_ports }}"
 
     - name: Ensure private config exists on control node
