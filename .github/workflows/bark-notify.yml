@@ -1,0 +1,57 @@
+name: Notify Bark
+
+on:
+  workflow_run:
+    workflows: ["Ansible Deploy"]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  notify:
+    name: Send build result to Bark
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send notification
+        env:
+          BARK_WEBHOOK_URL: ${{ secrets.BARK_WEBHOOK_URL }}
+          RESULT: ${{ github.event.workflow_run.conclusion }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          REPOSITORY: ${{ github.repository }}
+          WORKFLOW: ${{ github.event.workflow_run.name }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${BARK_WEBHOOK_URL:-}" ]; then
+            echo "::error::Missing Actions secret BARK_WEBHOOK_URL"
+            exit 1
+          fi
+
+          short_sha="${SHA:0:7}"
+          title="${REPOSITORY}: ${RESULT}"
+          body="${WORKFLOW} | ${BRANCH} | ${short_sha}"
+          level="active"
+          if [ "${RESULT}" = "success" ]; then
+            level="passive"
+          fi
+
+          payload=$(jq -n \
+            --arg title "${title}" \
+            --arg body "${body}" \
+            --arg url "${RUN_URL}" \
+            --arg group "GitHub CI" \
+            --arg level "${level}" \
+            '{
+              title: $title,
+              body: $body,
+              url: $url,
+              group: $group,
+              level: $level
+            }')
+
+          curl --fail --silent --show-error \
+            --request POST "${BARK_WEBHOOK_URL}" \
+            --header "Content-Type: application/json" \
+            --data "${payload}"
