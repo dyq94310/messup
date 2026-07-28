@@ -104,7 +104,7 @@ jobs:
 
       - name: Upload Bark decision summary
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: bark-summary-detect
           path: bark-summary-detect.txt
@@ -340,7 +340,7 @@ jobs:
 
       - name: Upload Bark deployment summary
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: bark-summary-deploy
           path: ${{ env.BARK_SUMMARY_FILE }}
