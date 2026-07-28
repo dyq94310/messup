@@ -34,6 +34,7 @@ jobs:
       deploy_required: ${{ steps.classify.outputs.deploy_required }}
       approval_required: ${{ steps.classify.outputs.approval_required }}
       reason: ${{ steps.classify.outputs.reason }}
+      commit_title: ${{ steps.classify.outputs.commit_title }}
     steps:
       - name: Checkout public repository
         uses: actions/checkout@v5
@@ -48,6 +49,7 @@ jobs:
           INPUT_LIMIT: ${{ github.event.inputs.limit }}
           DISPATCH_TAGS: ${{ github.event.client_payload.tags }}
           DISPATCH_LIMIT: ${{ github.event.client_payload.limit }}
+          DISPATCH_COMMIT_TITLE: ${{ github.event.client_payload.commit_title }}
         run: |
           set -euo pipefail
           chmod +x scripts/classify-deploy-change.sh
@@ -57,6 +59,14 @@ jobs:
             printf -v "$key" '%s' "$value"
             echo "${key}=${value}" >> "$GITHUB_OUTPUT"
           done <<< "$OUTPUT"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            COMMIT_TITLE="手动部署"
+          else
+            COMMIT_TITLE="${DISPATCH_COMMIT_TITLE:-私有仓提交标题未知}"
+          fi
+          COMMIT_TITLE="${COMMIT_TITLE%%$'\n'*}"
+          COMMIT_TITLE="${COMMIT_TITLE:0:200}"
+          echo "commit_title=${COMMIT_TITLE}" >> "$GITHUB_OUTPUT"
           {
             echo "## 部署决策"
             echo ""
@@ -87,6 +97,7 @@ jobs:
           DEPLOY_REQUIRED: ${{ steps.classify.outputs.deploy_required }}
           APPROVAL_REQUIRED: ${{ steps.classify.outputs.approval_required }}
           REASON: ${{ steps.classify.outputs.reason }}
+          COMMIT_TITLE: ${{ steps.classify.outputs.commit_title }}
         run: |
           {
             echo "部署决策: ${DEPLOY_REQUIRED:-unknown}"
@@ -94,6 +105,7 @@ jobs:
             echo "部署模式: ${MODE:-unknown}"
             echo "服务: ${TAGS:-all}"
             echo "目标节点: ${LIMIT:-all}"
+            echo "配置提交: ${COMMIT_TITLE:-私有仓提交标题未知}"
             echo "原因: ${REASON:-unknown}"
           } > bark-summary-detect.txt
 
@@ -312,6 +324,7 @@ jobs:
           chmod +x scripts/render-deploy-summary.sh
           TAGS="${{ needs.detect.outputs.tags }}" \
           LIMIT="${{ needs.detect.outputs.limit }}" \
+          COMMIT_TITLE="${{ needs.detect.outputs.commit_title }}" \
           MODE="${{ needs.detect.outputs.mode }}" \
           REACHABLE="${{ steps.conn.outputs.reachable_limit }}" \
           UNREACHABLE="${{ steps.conn.outputs.unreachable_hosts }}" \
@@ -326,6 +339,7 @@ jobs:
           chmod +x scripts/render-deploy-summary.sh
           TAGS="${{ needs.detect.outputs.tags }}" \
           LIMIT="${{ needs.detect.outputs.limit }}" \
+          COMMIT_TITLE="${{ needs.detect.outputs.commit_title }}" \
           MODE="${{ needs.detect.outputs.mode }}" \
           REACHABLE="${{ steps.conn.outputs.reachable_limit }}" \
           UNREACHABLE="${{ steps.conn.outputs.unreachable_hosts }}" \

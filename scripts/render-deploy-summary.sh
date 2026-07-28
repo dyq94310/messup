@@ -12,6 +12,7 @@ UNREACHABLE="${UNREACHABLE:-}"
 PLAYBOOK_RC="${PLAYBOOK_RC:-}"
 MODE="${MODE:-}"
 EVENT_NAME="${EVENT_NAME:-}"
+COMMIT_TITLE="${COMMIT_TITLE:-私有仓提交标题未知}"
 SUMMARY="${GITHUB_STEP_SUMMARY:-}"
 BARK_SUMMARY_FILE="${BARK_SUMMARY_FILE:-}"
 
@@ -208,6 +209,7 @@ fi
 if [ -n "$BARK_SUMMARY_FILE" ]; then
   {
     echo "结果: ${result_text}"
+    echo "配置提交: ${COMMIT_TITLE}"
     echo "部署模式: ${deploy_mode}"
     echo "目标节点: ${target_count} 台"
     echo "服务: ${service_scope}"
