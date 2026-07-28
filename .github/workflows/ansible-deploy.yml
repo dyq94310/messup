@@ -1,16 +1,11 @@
 name: Ansible Deploy
 
 # 触发来源:
-# 1) push main          → 本仓 playbook / inventory / 版本变更
-# 2) repository_dispatch → 私有仓配置变更 (private-config-updated)
-# 3) workflow_dispatch  → 手动部署（可指定 limit / tags）
+# 1) repository_dispatch → 私有仓配置变更 (private-config-updated)
+# 2) workflow_dispatch  → 手动部署（可指定 limit / tags）
+#
+# 公开仓 push 不触发生产部署；公开仓改动由 ci.yml 负责静态校验。
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - "**.md"
-      - "LICENSE"
-      - ".gitignore"
   repository_dispatch:
     types: [private-config-updated]
   workflow_dispatch:
@@ -144,7 +139,8 @@ jobs:
           repository: dyq94310/messup-private
           ssh-key: ${{ secrets.ANSIBLE_SSH_KEY }}
           path: private-config
-          ref: main
+          # 自动部署固定到触发 dispatch 的私有仓提交，避免排队期间读取更新后的 main。
+          ref: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.sha || 'main' }}
 
       - name: Setup SSH for Ansible → managed nodes (same id_ed25519_github)
         run: |
