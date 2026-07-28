@@ -245,7 +245,6 @@
         mode: "0600"
         owner: root
         group: root
-        backup: true
       notify: Restart singbox
 
     - name: Collect configured sing-box certificate source hosts
