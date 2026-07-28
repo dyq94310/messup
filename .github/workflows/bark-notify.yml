@@ -74,12 +74,13 @@ jobs:
             summary="摘要未生成"
           fi
 
-          body="${WORKFLOW} | ${BRANCH} | ${short_sha}"$'\n'\
-            "执行结果: ${RESULT}"$'\n'\
-            "开始时间: ${start_time}"$'\n'\
-            "结束时间: ${finish_time}"$'\n'\
-            "耗时: ${duration_text}"$'\n'\
-            "${summary}"
+          body=$(printf '%s\n执行结果: %s\n开始时间: %s\n结束时间: %s\n耗时: %s\n%s' \
+            "${WORKFLOW} | ${BRANCH} | ${short_sha}" \
+            "${RESULT}" \
+            "${start_time}" \
+            "${finish_time}" \
+            "${duration_text}" \
+            "${summary}")
           level="active"
           if [ "${RESULT}" = "success" ]; then
             level="passive"
