@@ -31,6 +31,8 @@ jobs:
           WORKFLOW: ${{ github.event.workflow_run.name }}
           BRANCH: ${{ github.event.workflow_run.head_branch }}
           SHA: ${{ github.event.workflow_run.head_sha }}
+          STARTED_AT: ${{ github.event.workflow_run.run_started_at }}
+          FINISHED_AT: ${{ github.event.workflow_run.updated_at }}
         run: |
           set -euo pipefail
 
@@ -40,7 +42,28 @@ jobs:
           fi
 
           short_sha="${SHA:0:7}"
-          title="${REPOSITORY}: ${RESULT}"
+          repo_name="${REPOSITORY##*/}"
+          case "${RESULT}" in
+            success)   title="✔ ${repo_name} · 部署成功" ;;
+            failure)   title="✘ ${repo_name} · 部署失败" ;;
+            cancelled) title="${repo_name} · 部署取消" ;;
+            timed_out) title="${repo_name} · 部署超时" ;;
+            skipped)   title="${repo_name} · 部署跳过" ;;
+            *)         title="${repo_name} · ${RESULT}" ;;
+          esac
+
+          start_time="unknown"
+          finish_time="unknown"
+          duration_text="unknown"
+          if start_epoch=$(date -d "${STARTED_AT}" +%s 2>/dev/null) \
+            && finish_epoch=$(date -d "${FINISHED_AT}" +%s 2>/dev/null) \
+            && [ "${finish_epoch}" -ge "${start_epoch}" ]; then
+            start_time=$(TZ=Asia/Shanghai date -d "${STARTED_AT}" '+%F %T')
+            finish_time=$(TZ=Asia/Shanghai date -d "${FINISHED_AT}" '+%F %T')
+            duration=$((finish_epoch - start_epoch))
+            duration_text="$((duration / 60))分$((duration % 60))秒"
+          fi
+
           summary=""
           if [ -s bark-summary-deploy.txt ]; then
             summary=$(<bark-summary-deploy.txt)
@@ -51,7 +74,12 @@ jobs:
             summary="摘要未生成"
           fi
 
-          body="${WORKFLOW} | ${BRANCH} | ${short_sha}"$'\n'"${summary}"
+          body="${WORKFLOW} | ${BRANCH} | ${short_sha}"$'\n'\
+            "执行结果: ${RESULT}"$'\n'\
+            "开始时间: ${start_time}"$'\n'\
+            "结束时间: ${finish_time}"$'\n'\
+            "耗时: ${duration_text}"$'\n'\
+            "${summary}"
           level="active"
           if [ "${RESULT}" = "success" ]; then
             level="passive"
