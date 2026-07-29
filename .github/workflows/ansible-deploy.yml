@@ -50,7 +50,7 @@ jobs:
           INPUT_LIMIT: ${{ github.event.inputs.limit }}
           DISPATCH_TAGS: ${{ github.event.client_payload.tags }}
           DISPATCH_LIMIT: ${{ github.event.client_payload.limit }}
-          DISPATCH_PLAN: ${{ github.event.client_payload.deploy_plan }}
+          DISPATCH_PLAN: ${{ toJSON(github.event.client_payload.deploy_plan) }}
           DISPATCH_APPROVAL_REQUIRED: ${{ github.event.client_payload.approval_required }}
           DISPATCH_COMMIT_TITLE: ${{ github.event.client_payload.commit_title }}
         run: |
