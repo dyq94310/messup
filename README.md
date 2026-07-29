@@ -273,7 +273,7 @@ CI 顺序：`00-bootstrap-ssh`（密钥 / `bootstrap_password`）→ `check-conn
 
 公开仓 `messup` 的 push 和 Pull Request 只运行 `CI` 静态校验，不 checkout 私有配置、不配置生产 SSH、不连接节点。公开仓的 `Ansible Deploy` 不再响应 `push`。
 
-生产自动部署只由 `messup-private/main` 的 `repository_dispatch` 触发；手工修复使用公开仓 `workflow_dispatch`。私有仓 dispatch 会携带触发提交 SHA，公开仓会固定 checkout 该 SHA，避免部署排队期间读取后续提交。
+生产自动部署只由 `messup-private/main` 的 `repository_dispatch` 触发；手工修复使用公开仓 `workflow_dispatch`。私有仓按一次 push 的完整 `before..after` 范围推断服务变更，避免一次 push 包含多个提交时只比较最后一个提交；dispatch 会携带最终提交 SHA，公开仓会固定 checkout 该 SHA，避免部署排队期间读取后续提交。
 
 主仓改动分类仍用于说明哪些改动过去会部署，但当前不会直接连接节点：
 
