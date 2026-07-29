@@ -66,7 +66,8 @@ jobs:
           if [ "$EVENT_NAME" = "repository_dispatch" ] && [ -n "${DISPATCH_PLAN:-}" ]; then
             if jq -e '.mode != "full" and (.targets | type == "array")' \
               <<< "$DISPATCH_PLAN" >/dev/null; then
-              DEPLOY_PLAN="$DISPATCH_PLAN"
+              # GITHUB_OUTPUT requires each value to stay on one line.
+              DEPLOY_PLAN="$(jq -c '.' <<< "$DISPATCH_PLAN")"
             fi
           fi
           echo "deploy_plan=${DEPLOY_PLAN}" >> "$GITHUB_OUTPUT"
