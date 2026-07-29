@@ -1,8 +1,8 @@
 ---
 # Deploy a per-host probe command from private inventory host_vars.
 # The command itself is secret; only its SHA-256 is persisted on the node.
-- name: Deploy probe on managed nodes
-  hosts: all_nodes
+- name: Deploy probe on probe nodes
+  hosts: probe_nodes
   gather_facts: false
   become: false
   ignore_unreachable: true

@@ -30,6 +30,7 @@ jobs:
     outputs:
       tags: ${{ steps.classify.outputs.tags }}
       limit: ${{ steps.classify.outputs.limit }}
+      deploy_plan: ${{ steps.classify.outputs.deploy_plan }}
       mode: ${{ steps.classify.outputs.mode }}
       deploy_required: ${{ steps.classify.outputs.deploy_required }}
       approval_required: ${{ steps.classify.outputs.approval_required }}
@@ -49,6 +50,8 @@ jobs:
           INPUT_LIMIT: ${{ github.event.inputs.limit }}
           DISPATCH_TAGS: ${{ github.event.client_payload.tags }}
           DISPATCH_LIMIT: ${{ github.event.client_payload.limit }}
+          DISPATCH_PLAN: ${{ github.event.client_payload.deploy_plan }}
+          DISPATCH_APPROVAL_REQUIRED: ${{ github.event.client_payload.approval_required }}
           DISPATCH_COMMIT_TITLE: ${{ github.event.client_payload.commit_title }}
         run: |
           set -euo pipefail
@@ -59,6 +62,14 @@ jobs:
             printf -v "$key" '%s' "$value"
             echo "${key}=${value}" >> "$GITHUB_OUTPUT"
           done <<< "$OUTPUT"
+          DEPLOY_PLAN=""
+          if [ "$EVENT_NAME" = "repository_dispatch" ] && [ -n "${DISPATCH_PLAN:-}" ]; then
+            if jq -e '.mode != "full" and (.targets | type == "array")' \
+              <<< "$DISPATCH_PLAN" >/dev/null; then
+              DEPLOY_PLAN="$DISPATCH_PLAN"
+            fi
+          fi
+          echo "deploy_plan=${DEPLOY_PLAN}" >> "$GITHUB_OUTPUT"
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             COMMIT_TITLE="手动部署"
           else
@@ -77,6 +88,7 @@ jobs:
             echo "| 是否审批 | \`${APPROVAL_REQUIRED:-false}\` |"
             echo "| tags | \`${TAGS:-all}\` |"
             echo "| limit | \`${LIMIT:-all}\` |"
+            echo "| deploy plan | \`${DEPLOY_PLAN:-legacy tags/limit}\` |"
             echo "| 原因 | ${REASON:-unknown} |"
             echo ""
             if [ "${APPROVAL_REQUIRED:-false}" = "true" ]; then
@@ -262,6 +274,7 @@ jobs:
           ANSIBLE_HOST_KEY_CHECKING: "False"
           ANSIBLE_FORCE_COLOR: "1"
           ANSIBLE_SSH_RETRIES: "3"
+          DEPLOY_PLAN: ${{ needs.detect.outputs.deploy_plan }}
           ANSIBLE_SSH_ARGS: >-
             -o IdentitiesOnly=yes
             -o ControlMaster=auto
@@ -278,29 +291,51 @@ jobs:
           chmod 700 ~/.ansible/cp
           TAGS="${{ needs.detect.outputs.tags }}"
           LIMIT="${{ needs.detect.outputs.limit }}"
-          EXTRA=""
-          if [ -n "${LIMIT}" ] && [ "${LIMIT}" != "<all>" ]; then EXTRA="${EXTRA} --limit ${LIMIT}"; fi
-          if [ -n "${TAGS}" ] && [ "${TAGS}" != "<all>" ]; then EXTRA="${EXTRA} --tags ${TAGS}"; fi
           REACH_LIMIT="${{ steps.conn.outputs.reachable_limit }}"
+          run_playbook() {
+            local tag="$1" hosts="$2"
+            local -a extra=(--limit "$hosts")
+            local playbook="playbooks/site.yml"
+            if [ -n "$tag" ]; then
+              extra+=(--tags "$tag")
+              [ -n "$DEPLOY_PLAN" ] && playbook="playbooks/services.yml"
+            fi
+            echo "Running: ansible-playbook ${playbook} ${extra[*]}"
+            ansible-playbook \
+              -i private-config/inventory/inventory.ini \
+              "$playbook" \
+              --private-key ~/.ssh/id_ed25519_github \
+              -e "private_config_temp=${GITHUB_WORKSPACE}/private-config" \
+              "${extra[@]}"
+          }
 
-          # 部分主机不可达：去掉原有 --limit，改为仅可达主机（避免双重 --limit）
-          if [ -n "${REACH_LIMIT}" ]; then
-            # shellcheck disable=SC2001
-            EXTRA="$(echo " ${EXTRA} " | sed -E 's/ --limit [^ ]+//g' | sed -E 's/^ +| +$//g')"
-            EXTRA="${EXTRA} --limit ${REACH_LIMIT}"
-            echo "⚠️  仅部署可达主机: ${REACH_LIMIT}"
-          fi
-
-          echo "Running: ansible-playbook playbooks/site.yml ${EXTRA:-}"
           set +e
-          # shellcheck disable=SC2086
-          ansible-playbook \
-            -i private-config/inventory/inventory.ini \
-            playbooks/site.yml \
-            --private-key ~/.ssh/id_ed25519_github \
-            -e "private_config_temp=${GITHUB_WORKSPACE}/private-config" \
-            ${EXTRA}
-          rc=$?
+          if [ -n "${DEPLOY_PLAN}" ]; then
+            rc=0
+            jq -e '.targets | type == "array"' <<< "$DEPLOY_PLAN" >/dev/null || rc=$?
+            while IFS= read -r target; do
+              [ "$rc" -eq 0 ] || break
+              tag=$(jq -r '.tag' <<< "$target")
+              hosts=$(jq -r '.hosts | join(":")' <<< "$target")
+              if [ -n "$REACH_LIMIT" ]; then
+                reachable_json=$(printf '%s' "$REACH_LIMIT" | tr ':' '\n' | jq -R . | jq -s .)
+                hosts=$(jq -r --argjson reachable "$reachable_json" \
+                  '.hosts | map(select(. as $host | $reachable | index($host))) | join(":")' <<< "$target")
+              fi
+              [ -z "$hosts" ] && continue
+              run_playbook "$tag" "$hosts"
+              rc=$?
+            done < <(jq -c '.targets[]' <<< "$DEPLOY_PLAN")
+          else
+            hosts="$LIMIT"
+            if [ -n "$REACH_LIMIT" ]; then
+              hosts="$REACH_LIMIT"
+            elif [ -z "$hosts" ] || [ "$hosts" = "<all>" ]; then
+              hosts="all_nodes"
+            fi
+            run_playbook "${TAGS:-}" "$hosts"
+            rc=$?
+          fi
           set -e
 
           # Ansible 退出码: 0 OK | 2 主机任务失败 | 3 不可达 | 4 解析错误 ...

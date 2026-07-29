@@ -9,6 +9,7 @@ INPUT_TAGS="${INPUT_TAGS:-}"
 INPUT_LIMIT="${INPUT_LIMIT:-}"
 DISPATCH_TAGS="${DISPATCH_TAGS:-}"
 DISPATCH_LIMIT="${DISPATCH_LIMIT:-}"
+DISPATCH_APPROVAL_REQUIRED="${DISPATCH_APPROVAL_REQUIRED:-false}"
 
 TAGS=""
 LIMIT=""
@@ -22,6 +23,7 @@ if [ "$EVENT_NAME" = "repository_dispatch" ]; then
   LIMIT="$DISPATCH_LIMIT"
   MODE="private-config-update"
   DEPLOY_REQUIRED="true"
+  APPROVAL_REQUIRED="$DISPATCH_APPROVAL_REQUIRED"
   REASON="private repository requested deployment"
 elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
   TAGS="$INPUT_TAGS"

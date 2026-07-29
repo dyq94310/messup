@@ -49,7 +49,7 @@
 - 仅配置变更时只重启服务；版本号变化时才重新下载二进制
 - 所有 `all_nodes` 默认配置为 `Asia/Shanghai`（UTC+08:00），可单独运行 `--tags timezone`
 - inventory 第一列节点别名同时作为目标机系统 hostname；每台机器的 `/etc/hosts` 只维护自己的 `127.0.1.1 <节点别名>` 映射，不建立节点间互访记录，可单独运行 `--tags hostname,hosts`
-- 每台节点的 probe 安装命令保存在私有仓 `inventory/host_vars/<节点名>.yml`，可单独运行 `--tags probe --limit <节点名>`；命令 hash 保存在目标机本地，未变化时跳过执行
+- 每台节点的 probe 安装命令保存在私有仓 `inventory/host_vars/<节点名>.yml`，节点还需加入私有 inventory 的 `probe_nodes`；可单独运行 `--tags probe --limit <节点名>`。命令 hash 保存在目标机本地，未变化时跳过执行
 
 ---
 
@@ -60,6 +60,7 @@ messup/                              # 公开仓（无主机清单）
 ├── ansible.cfg                      # inventory → private-config/inventory/
 ├── playbooks/
 │   ├── site.yml                     # ssh bootstrap → python → system → hostname/hosts → services
+│   ├── services.yml                 # 仅业务服务，用于自动服务级计划
 │   ├── 00-bootstrap-ssh.yml         # 密钥优先；bootstrap_password 密码装钥
 │   ├── 00-bootstrap-python.yml
 │   ├── 00-configure-system.yml      # 统一系统时区（Asia/Shanghai）
@@ -247,24 +248,23 @@ git add -A && git commit -m "add node-b" && git push
 | 事件 | 结果 |
 |------|------|
 | push `messup` → `main` | 仅运行公开仓 `CI` 静态校验，不连接节点 |
-| push `messup-private` → `main` | 推断 tags → `repository_dispatch` → messup 再部署 |
+| push `messup-private` → `main` | 推断服务级计划 → `repository_dispatch` → messup 分服务部署 |
 | Actions 手动 Run workflow | 可填 `limit` / `tags` |
 
-CI 顺序：`00-bootstrap-ssh`（密钥 / `bootstrap_password`）→ `check-connectivity` → `site.yml`。密码任务 `no_log`，流水线日志不打印密码。
+CI 顺序：`00-bootstrap-ssh`（密钥 / `bootstrap_password`）→ `check-connectivity` → 自动服务计划使用 `services.yml`，节点 reconcile 或手动部署使用 `site.yml`。密码任务 `no_log`，流水线日志不打印密码。
 
 **对应服务推断示例**
 
-| 变更路径 | 部署 tags |
-|----------|-----------|
-| `messup-private/singbox/**` | `singbox`（含 bootstrap） |
-| `messup-private/smartdns/**` | `smartdns` |
-| `messup-private/nft/**` | `nft` |
-| `messup-private/inventory/inventory.ini` 仅新增节点 | `--limit <新节点>` + 该节点所属服务 tags |
-| `messup-private/inventory/inventory.ini` 新增节点或既有节点参数变化 | 目标节点所属服务 tags + `--limit <节点>` |
-| `messup-private/inventory/inventory.ini` 仅调整参数顺序/空白 | 不部署 |
-| `messup-private/inventory/inventory.ini` 删除节点、服务组成员变化、证书源变化 | 全量 |
-| `messup-private/inventory/group_vars/all.yml` 中 `singbox_*` / `smartdns_*` / `nft_*` | 对应服务 tags（全服务组） |
-| `messup-private/inventory/group_vars/all.yml` 中未知或公共变量 | 全量 |
+| 变更路径 | 部署范围 |
+|----------|----------|
+| `messup-private/singbox/<env>/**` | `singbox_nodes ∩ deployment_env=<env>` |
+| `messup-private/singbox/` 根目录共享文件 | 全部 `singbox_nodes` |
+| `messup-private/smartdns/**` | 全部 `smartdns_nodes` |
+| `messup-private/nft/<env>/**` | `nft_nodes ∩ deployment_env=<env>` |
+| `messup-private/nft/` 根目录共享文件 | 全部 `nft_nodes` |
+| `messup-private/inventory/inventory.ini` / `group_vars/all.yml` / `.deployignore` | 全量，等待 `production` 审批 |
+| `messup-private/inventory/host_vars/<节点>.yml` | 根据 `<service>_` 前缀部署该节点对应服务 |
+| 删除 host_vars、未知或公共变量 | 全量，等待 `production` 审批 |
 | 两仓同时改 / 公共文件 | 全量 |
 | `playbooks/01-deploy-singbox.yml` | `singbox` |
 | `playbooks/03-deploy-nft.yml` | `nft` |
@@ -286,7 +286,7 @@ CI 顺序：`00-bootstrap-ssh`（密钥 / `bootstrap_password`）→ `check-conn
 
 未知变更的审批依赖 GitHub 仓库中配置 `production` Environment 的 Required reviewers。审批发生在 checkout 私有配置、写入 SSH 私钥和连接节点之前。
 
-> 使用 `--tags singbox` 时 bootstrap 带 `always` 标签仍会执行，保证 Python 就绪。
+> 自动服务级计划在 SSH/Python bootstrap 后通过 `playbooks/services.yml` 执行，避免每个服务重复 bootstrap；手动 `site.yml --tags` 保持原有 `always` 行为。
 
 ---
 
