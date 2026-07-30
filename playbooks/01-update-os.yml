@@ -1,6 +1,4 @@
 ---
-name: Update OS packages
-
 - name: Update OS packages (Alpine/Debian)
   hosts: all_nodes
   become: true
@@ -20,7 +18,7 @@ name: Update OS packages
         - name: Alpine update
           ansible.builtin.command: |
             apk update && apk upgrade --no-cache
-          when: "alpine" in (os_release.stdout | lower)
+          when: "'alpine' in (os_release.stdout | lower)"
           register: result_alpine
           changed_when: result_alpine.rc == 0
           failed_when: false
@@ -28,7 +26,7 @@ name: Update OS packages
         - name: Debian update
           ansible.builtin.command: |
             apt update && apt upgrade -y --no-install-recommends --no-install-suggests
-          when: "debian" in (os_release.stdout | lower) or "ubuntu" in (os_release.stdout | lower)
+          when: "'debian' in (os_release.stdout | lower) or 'ubuntu' in (os_release.stdout | lower)"
           register: result_debian
           changed_when: result_debian.rc == 0
           failed_when: false

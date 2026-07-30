@@ -44,4 +44,7 @@
 - name: Update OS packages (once after deployment)
   import_playbook: 01-update-os.yml
   tags: [update_os]
-  become: false
+
+- name: Install OS update schedule
+  import_playbook: 02-update-os-cron.yml
+  tags: [update_os_cron]
