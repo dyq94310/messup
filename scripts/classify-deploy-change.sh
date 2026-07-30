@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
-# Classify public-repository changes before any private checkout or SSH setup.
+# Classify deployment intent for Ansible Deploy detect job.
+#
+# Production deploy is triggered only by repository_dispatch or workflow_dispatch
+# (see ansible-deploy.yml). The git-diff branch (EVENT_NAME=push, the default
+# when unset) is for local dry-runs only and does NOT run in CI deploy today.
+# Private path scoping lives in messup-private detect-deploy-scope.py.
 set -euo pipefail
 
 OLD_REF="${1:-HEAD~1}"

@@ -251,9 +251,9 @@ git add -A && git commit -m "add node-b" && git push
 | push `messup-private` → `main` | 推断服务级计划 → `repository_dispatch` → messup 分服务部署 |
 | Actions 手动 Run workflow | 可填 `limit` / `tags` |
 
-CI 顺序：`00-bootstrap-ssh`（密钥 / `bootstrap_password`）→ `check-connectivity` → 自动服务计划使用 `services.yml`，节点 reconcile 或手动部署使用 `site.yml`。密码任务 `no_log`，流水线日志不打印密码。
+**自动部署顺序**（`repository_dispatch` / 部分手动）：`00-bootstrap-ssh`（密钥 / `bootstrap_password`）→ `check-connectivity` → 有 `deploy_plan` 时用 `services.yml` 分服务；全量或未带 plan 时用 `site.yml`（含 Python bootstrap 等）。密码任务 `no_log`。
 
-**对应服务推断示例**
+**私有仓服务推断示例**（权威实现：`messup-private` 的 `detect-deploy-scope.py`）
 
 | 变更路径 | 部署范围 |
 |----------|----------|
@@ -264,29 +264,24 @@ CI 顺序：`00-bootstrap-ssh`（密钥 / `bootstrap_password`）→ `check-conn
 | `messup-private/nft/` 根目录共享文件 | 全部 `nft_nodes` |
 | `messup-private/inventory/inventory.ini` / `group_vars/all.yml` / `.deployignore` | 全量，等待 `production` 审批 |
 | `messup-private/inventory/host_vars/<节点>.yml` | 根据 `<service>_` 前缀部署该节点对应服务 |
-| 删除 host_vars、未知或公共变量 | 全量，等待 `production` 审批 |
-| 两仓同时改 / 公共文件 | 全量 |
-| `playbooks/01-deploy-singbox.yml` | `singbox` |
-| `playbooks/03-deploy-nft.yml` | `nft` |
+| 删除 host_vars、未知路径 | 全量，等待 `production` 审批 |
+| 仅文档 / `tests/**` / `Makefile` / `ssh/public_keys/**` 等忽略项 | 不 dispatch |
 
 ### 公开仓校验与生产部署隔离
 
-公开仓 `messup` 的 push 和 Pull Request 只运行 `CI` 静态校验，不 checkout 私有配置、不配置生产 SSH、不连接节点。公开仓的 `Ansible Deploy` 不再响应 `push`。
+公开仓 `messup` 的 push 和 Pull Request **只**运行 `CI`（YAML / shell / workflow 形状校验），不 checkout 私有配置、不配置生产 SSH、不连接节点。`Ansible Deploy` **不**响应本仓 `push`。
 
-生产自动部署只由 `messup-private/main` 的 `repository_dispatch` 触发；手工修复使用公开仓 `workflow_dispatch`。私有仓按一次 push 的完整 `before..after` 范围推断服务变更，避免一次 push 包含多个提交时只比较最后一个提交；dispatch 会携带最终提交 SHA，公开仓会固定 checkout 该 SHA，避免部署排队期间读取后续提交。
+生产自动部署 **只**由 `messup-private/main` 的 `repository_dispatch` 触发；手工修复用公开仓 `workflow_dispatch`。私有仓按一次 push 的完整 `before..after` 推断范围；dispatch 携带最终 **sha**，公开仓固定 checkout 该版本。
 
-主仓改动分类仍用于说明哪些改动过去会部署，但当前不会直接连接节点：
+| 公开仓改动 | 实际行为 |
+|------------|----------|
+| 任意 push / PR | 仅 `CI` 静态校验 |
+| 业务 playbook / 模板要上生产 | 合并后：等 **private 配置变更** 触发 dispatch，或本仓 **`workflow_dispatch` 手动部署** |
+| 文档、摘要脚本等 | 不部署 |
 
-| 主仓变更 | 行为 |
-|----------|------|
-| `singbox` / `smartdns` / `nft` 业务 playbook 或模板 | 自动部署对应服务组 |
-| `README.md`、其他 Markdown、LICENSE、`.gitignore` | 不部署 |
-| `scripts/render-deploy-summary.sh` | 不部署 |
-| workflow、bootstrap、`ansible.cfg`、未知文件 | 进入 `production` Environment，等待 `Action required`；批准后全量部署 |
+高风险 private 变更（如 inventory / `.deployignore`）的 `production` Environment 审批发生在 checkout 私有配置、写入 SSH 私钥和连接节点之前（若仓库已配置 Required reviewers）。
 
-未知变更的审批依赖 GitHub 仓库中配置 `production` Environment 的 Required reviewers。审批发生在 checkout 私有配置、写入 SSH 私钥和连接节点之前。
-
-> 自动服务级计划在 SSH/Python bootstrap 后通过 `playbooks/services.yml` 执行，避免每个服务重复 bootstrap；手动 `site.yml --tags` 保持原有 `always` 行为。
+> 自动路径：SSH bootstrap → 连通性 → `services.yml`。全量/`site.yml` 仍包含 Python bootstrap 等步骤。`scripts/classify-deploy-change.sh` 的 git-diff 规则仅供本地说明，不因本仓 push 触发部署。
 
 ---
 

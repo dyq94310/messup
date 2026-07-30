@@ -30,29 +30,28 @@
 | 本仓 `push` / PR | **仅** `ci.yml`，不连节点、不 checkout 私有仓 |
 | `Notify Bark` | `workflow_run` 于 Ansible Deploy 完成后；不触发部署 |
 
-## 本仓变更分类
+## 部署范围从哪来
 
-**以 `scripts/classify-deploy-change.sh` 为准**，勿凭记忆推断。
+**生产自动范围以 private 为准**：`messup-private` 的 `detect-deploy-scope.py` 生成 `deploy_plan` / tags / limit / `approval_required`，经 `repository_dispatch` 传入；本仓 **透传并执行**，不根据本仓 git diff 自动部署。
 
-| 变更 | 结果 |
+本仓 `scripts/classify-deploy-change.sh` 在 Deploy 中只处理：
+
+| `EVENT_NAME` | 行为 |
 | --- | --- |
-| sing-box playbook/模板 | tags=`singbox` |
-| SmartDNS playbook/模板 | tags=`smartdns` |
-| nft playbook/模板 | tags=`nft` |
-| probe playbook | tags=`probe` |
-| 文档、LICENSE、`.gitignore`、`render-deploy-summary.sh` | 跳过部署 |
-| workflow、bootstrap、`ansible.cfg`、未知文件 | `production` Environment 审批后全量 |
+| `repository_dispatch` | 使用 payload 的 tags/limit/`approval_required`（及 workflow 侧的 `deploy_plan`） |
+| `workflow_dispatch` | 使用人工输入的 tags/limit |
+| `push`（默认本地） | 可对 git diff 做**说明性**分类；**当前 Deploy 无 push 触发，CI 不会因此连节点** |
 
-私有仓路径级范围由 private 的 `detect-deploy-scope.py` 生成 `deploy_plan`；本仓只透传并执行。有 `deploy_plan` 时用 `services.yml` 分服务；否则/手动全量用 `site.yml`。
+有 `deploy_plan` 时用 `services.yml` 分服务；否则/手动全量用 `site.yml`。
 
-改分类逻辑时同步：脚本、workflow 输出、README、本文件。
+公开仓 playbook/模板要上生产：合并后靠 **private 配置变更触发 dispatch**，或本仓 **`workflow_dispatch` 手动部署**。改 private 范围规则时同步 private 文档；改本仓 classify 透传字段时同步本文件与 README。
 
 ## Ansible 硬约束
 
 - Alpine=OpenRC；Debian/Ubuntu=systemd；root 直连，无故勿 `become`
 - 幂等：配置未变不强制重启；版本变才重下二进制
 - 自动部署跟 Git 变更，不修远程手工漂移；漂移用 `workflow_dispatch`
-- 用现有 tags 与 `--limit`；新机顺序：SSH bootstrap → Python → 连通性 → 服务
+- 用现有 tags 与 `--limit`；新机：SSH bootstrap →（`site.yml` 含 Python）→ 连通性 → 服务；CI 自动 `services.yml` 为 SSH → 连通性 → 服务
 - 仅一台 `singbox_cert_source=true`；禁止多源
 - 密码/Token/私钥不进 playbook、模板、样例、日志
 
@@ -80,9 +79,8 @@
 ```bash
 git diff --check
 bash -n scripts/<changed>.sh
-# workflow：actionlint（若已安装）
-# playbook（有 private-config、不连生产时）:
-ansible-playbook --syntax-check playbooks/<changed>.yml
+# 本地可选（有 private-config / mock inventory 时）:
+# ansible-playbook --syntax-check -i <inventory> -e private_config_temp=<dir> playbooks/<changed>.yml
 ```
 
 连真实节点须说明目标、tags、limit、影响；优先 `--check`（raw/服务/下载/nft 可能不完全支持）。
