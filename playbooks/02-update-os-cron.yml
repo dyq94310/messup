@@ -18,6 +18,21 @@
           changed_when: false
           failed_when: false
 
+        - name: Check crontab executable
+          ansible.builtin.command: command -v crontab
+          register: crontab_check
+          changed_when: false
+          failed_when: false
+
+        - name: Install Debian cron package when missing
+          ansible.builtin.apt:
+            name: cron
+            state: present
+            update_cache: true
+          when:
+            - "'debian' in (os_release.stdout | lower) or 'ubuntu' in (os_release.stdout | lower)"
+            - crontab_check.rc != 0
+
         - name: Alpine cron
           ansible.builtin.cron:
             name: "OS update"
