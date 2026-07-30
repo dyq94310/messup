@@ -6,7 +6,7 @@ name: Update OS packages via cron (Hong Kong time)
   become: true
   gather_facts: false
   vars:
-    ansible_connection: ssh
+    ansible_connection: local
     ansible_become: true
     cron_hour: "9"
     cron_weekday: "1"   # Monday = 0 (Sunday) ~ 6 (Saturday)
@@ -29,6 +29,7 @@ name: Update OS packages via cron (Hong Kong time)
             job: |
               apk update && apk upgrade --no-cache
             state: present
+            become: true
           when: "alpine" in (os_release.stdout | lower)
           register: result_alpine
           changed_when: result_alpine is changed
@@ -42,6 +43,7 @@ name: Update OS packages via cron (Hong Kong time)
             job: |
               apt update && apt upgrade -y --no-install-recommends --no-install-suggests
             state: present
+            become: true
           when: "debian" in (os_release.stdout | lower) or "ubuntu" in (os_release.stdout | lower)
           register: result_debian
           changed_when: result_debian is changed
