@@ -1,0 +1,26 @@
+---
+# Set _is_alpine, _is_debian, _init from package manager probes.
+# Callers decide fail vs soft-skip when _init == 'unknown'.
+- name: Detect package manager
+  raw: |
+    if command -v apk >/dev/null 2>&1; then
+      echo alpine
+    elif command -v apt-get >/dev/null 2>&1; then
+      echo debian
+    else
+      echo unknown
+    fi
+  args:
+    executable: /bin/sh
+  register: _pkg_mgr_detected
+  changed_when: false
+  failed_when: false
+
+- name: Detect OS / init
+  set_fact:
+    _is_alpine: "{{ (_pkg_mgr_detected.stdout | default('') | trim) == 'alpine' }}"
+    _is_debian: "{{ (_pkg_mgr_detected.stdout | default('') | trim) == 'debian' }}"
+
+- name: Resolve init system
+  set_fact:
+    _init: "{{ 'openrc' if (_is_alpine | bool) else ('systemd' if (_is_debian | bool) else 'unknown') }}"

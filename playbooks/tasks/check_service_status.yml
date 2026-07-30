@@ -1,0 +1,15 @@
+---
+# Register _svc_status for deployment summary. Requires messup_service_name.
+- name: Check service status (OpenRC)
+  command: "rc-service {{ messup_service_name }} status"
+  register: _svc_status
+  changed_when: false
+  failed_when: false
+  when: _init == 'openrc'
+
+- name: Check service status (systemd)
+  command: "systemctl is-active {{ messup_service_name }}"
+  register: _svc_status
+  changed_when: false
+  failed_when: false
+  when: _init == 'systemd'

@@ -33,29 +33,8 @@
             2) 存在 smartdns/smartdns.conf（所有节点共用，不按 deployment_env 分）
 
   tasks:
-    - name: Detect package manager
-      raw: |
-        if command -v apk >/dev/null 2>&1; then
-          echo alpine
-        elif command -v apt-get >/dev/null 2>&1; then
-          echo debian
-        else
-          echo unknown
-        fi
-      args:
-        executable: /bin/sh
-      register: _pkg_mgr_detected
-      changed_when: false
-      failed_when: false
-
     - name: Detect OS / init
-      set_fact:
-        _is_alpine: "{{ (_pkg_mgr_detected.stdout | default('') | trim) == 'alpine' }}"
-        _is_debian: "{{ (_pkg_mgr_detected.stdout | default('') | trim) == 'debian' }}"
-
-    - name: Resolve init system
-      set_fact:
-        _init: "{{ 'openrc' if (_is_alpine | bool) else ('systemd' if (_is_debian | bool) else 'unknown') }}"
+      ansible.builtin.include_tasks: tasks/detect_os.yml
 
     - name: Fail on unsupported OS
       fail:
@@ -64,36 +43,21 @@
            os_family={{ ansible_facts['os_family'] | default('?') }} pkg_mgr={{ ansible_facts['pkg_mgr'] | default('?') }}
       when: _init == 'unknown'
 
-    - name: Install runtime dependencies (Alpine)
-      apk:
-        name:
+    - name: Ensure Debian python for apt module
+      ansible.builtin.include_tasks: tasks/ensure_debian_python.yml
+
+    - name: Install runtime dependencies
+      ansible.builtin.include_tasks: tasks/install_host_packages.yml
+      vars:
+        messup_apk_packages:
           - curl
           - tar
           - ca-certificates
           - openrc
-        state: present
-        update_cache: true
-      when: _is_alpine | bool
-
-    - name: Ensure apt module dependencies (Debian)
-      raw: |
-        set -e
-        apt-get update
-        DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-apt ca-certificates
-      args:
-        executable: /bin/sh
-      when: _is_debian | bool
-      changed_when: false
-
-    - name: Install runtime dependencies (Debian)
-      apt:
-        name:
+        messup_apt_packages:
           - curl
           - tar
           - ca-certificates
-        state: present
-        update_cache: true
-      when: _is_debian | bool
 
     - name: Detect CPU architecture (SmartDNS release naming)
       set_fact:
@@ -200,57 +164,13 @@
         backup: true
       notify: Restart smartdns
 
-    - name: Deploy OpenRC service unit
-      template:
-        src: "{{ playbook_dir }}/../templates/smartdns.openrc.j2"
-        dest: "/etc/init.d/{{ smartdns_service }}"
-        mode: "0755"
-        owner: root
-        group: root
-      notify: Restart smartdns
-      when: _init == 'openrc'
-
-    - name: Deploy systemd service unit
-      template:
-        src: "{{ playbook_dir }}/../templates/smartdns.service.j2"
-        dest: "/etc/systemd/system/{{ smartdns_service }}.service"
-        mode: "0644"
-        owner: root
-        group: root
-      notify: Restart smartdns
-      when: _init == 'systemd'
-      register: _sd_unit_sys
-
-    - name: Reload systemd after unit change
-      systemd:
-        daemon_reload: true
-      when: _init == 'systemd' and (_sd_unit_sys is defined and _sd_unit_sys is changed)
-
-    - name: Enable smartdns (OpenRC default runlevel)
-      command: "rc-update add {{ smartdns_service }} default"
-      register: _openrc_enable
-      changed_when: "'already installed' not in (_openrc_enable.stdout | default(''))"
-      when: _init == 'openrc'
-
-    - name: Enable smartdns (systemd)
-      service:
-        name: "{{ smartdns_service }}"
-        enabled: true
-      when: _init == 'systemd'
-
-    - name: Ensure smartdns is started (OpenRC)
-      command: "rc-service {{ smartdns_service }} start"
-      register: _openrc_start
-      changed_when: >-
-        'already started' not in (_openrc_start.stdout | default(''))
-        and 'started' in (_openrc_start.stdout | default(''))
-      when: _init == 'openrc'
-
-    - name: Ensure smartdns is started (systemd)
-      service:
-        name: "{{ smartdns_service }}"
-        state: started
-      when: _init == 'systemd'
+    - name: Deploy service unit and ensure running
+      ansible.builtin.include_tasks: tasks/deploy_service_unit.yml
+      vars:
+        messup_service_name: "{{ smartdns_service }}"
+        messup_openrc_src: "{{ playbook_dir }}/../templates/smartdns.openrc.j2"
+        messup_systemd_src: "{{ playbook_dir }}/../templates/smartdns.service.j2"
+        messup_service_notify: Restart smartdns
 
     - name: Cleanup temporary files
       file:
@@ -264,19 +184,10 @@
       changed_when: false
       failed_when: false
 
-    - name: Check service status (OpenRC)
-      command: "rc-service {{ smartdns_service }} status"
-      register: _svc_status
-      changed_when: false
-      failed_when: false
-      when: _init == 'openrc'
-
-    - name: Check service status (systemd)
-      command: "systemctl is-active {{ smartdns_service }}"
-      register: _svc_status
-      changed_when: false
-      failed_when: false
-      when: _init == 'systemd'
+    - name: Check service status
+      ansible.builtin.include_tasks: tasks/check_service_status.yml
+      vars:
+        messup_service_name: "{{ smartdns_service }}"
 
     - name: Deployment summary
       debug:

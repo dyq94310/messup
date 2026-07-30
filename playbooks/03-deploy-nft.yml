@@ -66,31 +66,8 @@
         or not (_nft_map_stat.stat.isreg | default(false))
 
   tasks:
-    - name: Detect package manager
-      raw: |
-        if command -v apk >/dev/null 2>&1; then
-          echo alpine
-        elif command -v apt-get >/dev/null 2>&1; then
-          echo debian
-        else
-          echo unknown
-        fi
-      args:
-        executable: /bin/sh
-      register: _pkg_mgr_detected
-      changed_when: false
-      failed_when: false
-      when: _nft_ok | bool
-
     - name: Detect OS / init
-      set_fact:
-        _is_alpine: "{{ (_pkg_mgr_detected.stdout | default('') | trim) == 'alpine' }}"
-        _is_debian: "{{ (_pkg_mgr_detected.stdout | default('') | trim) == 'debian' }}"
-      when: _nft_ok | bool
-
-    - name: Resolve init system
-      set_fact:
-        _init: "{{ 'openrc' if (_is_alpine | bool) else ('systemd' if (_is_debian | bool) else 'unknown') }}"
+      ansible.builtin.include_tasks: tasks/detect_os.yml
       when: _nft_ok | bool
 
     - name: Warn if unsupported OS (skip nft, do not fail host)
@@ -106,6 +83,7 @@
         _nft_skip_reason: "unsupported OS (need Alpine or Debian/Ubuntu)"
       when: _nft_ok | bool and _init == 'unknown'
 
+    # Soft-fail package path stays inline (ignore_errors); shared install_host_packages is hard-fail.
     - name: Install nftables, iptables, iproute2 (Alpine)
       apk:
         name:
@@ -118,15 +96,9 @@
       register: _nft_pkg
       ignore_errors: true
 
-    - name: Ensure apt module dependencies (Debian)
-      raw: |
-        set -e
-        apt-get update
-        DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-apt ca-certificates
-      args:
-        executable: /bin/sh
-      when: _nft_ok | bool and (_is_debian | bool)
-      changed_when: false
+    - name: Ensure Debian python for apt module
+      ansible.builtin.include_tasks: tasks/ensure_debian_python.yml
+      when: _nft_ok | bool
 
     - name: Install nftables, iptables, iproute2 (Debian)
       apt:

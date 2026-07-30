@@ -1,0 +1,58 @@
+---
+# Deploy OpenRC/systemd unit, enable and ensure started.
+# Required vars:
+#   messup_service_name
+#   messup_openrc_src
+#   messup_systemd_src
+#   messup_service_notify  (handler listen name, e.g. Restart singbox)
+- name: Deploy OpenRC service unit
+  template:
+    src: "{{ messup_openrc_src }}"
+    dest: "/etc/init.d/{{ messup_service_name }}"
+    mode: "0755"
+    owner: root
+    group: root
+  notify: "{{ messup_service_notify }}"
+  when: _init == 'openrc'
+
+- name: Deploy systemd service unit
+  template:
+    src: "{{ messup_systemd_src }}"
+    dest: "/etc/systemd/system/{{ messup_service_name }}.service"
+    mode: "0644"
+    owner: root
+    group: root
+  notify: "{{ messup_service_notify }}"
+  when: _init == 'systemd'
+  register: _messup_unit_sys
+
+- name: Reload systemd after unit change
+  systemd:
+    daemon_reload: true
+  when: _init == 'systemd' and (_messup_unit_sys is defined and _messup_unit_sys is changed)
+
+- name: Enable service (OpenRC default runlevel)
+  command: "rc-update add {{ messup_service_name }} default"
+  register: _openrc_enable
+  changed_when: "'already installed' not in (_openrc_enable.stdout | default(''))"
+  when: _init == 'openrc'
+
+- name: Enable service (systemd)
+  service:
+    name: "{{ messup_service_name }}"
+    enabled: true
+  when: _init == 'systemd'
+
+- name: Ensure service is started (OpenRC)
+  command: "rc-service {{ messup_service_name }} start"
+  register: _openrc_start
+  changed_when: >-
+    'already started' not in (_openrc_start.stdout | default(''))
+    and 'started' in (_openrc_start.stdout | default(''))
+  when: _init == 'openrc'
+
+- name: Ensure service is started (systemd)
+  service:
+    name: "{{ messup_service_name }}"
+    state: started
+  when: _init == 'systemd'

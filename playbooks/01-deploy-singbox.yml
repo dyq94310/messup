@@ -85,29 +85,8 @@
             4) CI 是否设置 -e private_config_temp=...
 
   tasks:
-    - name: Detect package manager
-      raw: |
-        if command -v apk >/dev/null 2>&1; then
-          echo alpine
-        elif command -v apt-get >/dev/null 2>&1; then
-          echo debian
-        else
-          echo unknown
-        fi
-      args:
-        executable: /bin/sh
-      register: _pkg_mgr_detected
-      changed_when: false
-      failed_when: false
-
     - name: Detect OS / init
-      set_fact:
-        _is_alpine: "{{ (_pkg_mgr_detected.stdout | default('') | trim) == 'alpine' }}"
-        _is_debian: "{{ (_pkg_mgr_detected.stdout | default('') | trim) == 'debian' }}"
-
-    - name: Resolve init system
-      set_fact:
-        _init: "{{ 'openrc' if (_is_alpine | bool) else ('systemd' if (_is_debian | bool) else 'unknown') }}"
+      ansible.builtin.include_tasks: tasks/detect_os.yml
 
     - name: Fail on unsupported OS
       fail:
@@ -116,36 +95,21 @@
            os_family={{ ansible_facts['os_family'] | default('?') }} pkg_mgr={{ ansible_facts['pkg_mgr'] | default('?') }}
       when: _init == 'unknown'
 
-    - name: Install runtime dependencies (Alpine)
-      apk:
-        name:
+    - name: Ensure Debian python for apt module
+      ansible.builtin.include_tasks: tasks/ensure_debian_python.yml
+
+    - name: Install runtime dependencies
+      ansible.builtin.include_tasks: tasks/install_host_packages.yml
+      vars:
+        messup_apk_packages:
           - curl
           - tar
           - ca-certificates
           - openrc
-        state: present
-        update_cache: true
-      when: _is_alpine | bool
-
-    - name: Ensure apt module dependencies (Debian)
-      raw: |
-        set -e
-        apt-get update
-        DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-apt ca-certificates
-      args:
-        executable: /bin/sh
-      when: _is_debian | bool
-      changed_when: false
-
-    - name: Install runtime dependencies (Debian)
-      apt:
-        name:
+        messup_apt_packages:
           - curl
           - tar
           - ca-certificates
-        state: present
-        update_cache: true
-      when: _is_debian | bool
 
     - name: Detect CPU architecture (sing-box release naming)
       set_fact:
@@ -408,57 +372,13 @@
           {{ _check.stderr | default('') }}
       when: _check.rc != 0
 
-    - name: Deploy OpenRC service unit
-      template:
-        src: "{{ playbook_dir }}/../templates/singbox.openrc.j2"
-        dest: "/etc/init.d/{{ singbox_service }}"
-        mode: "0755"
-        owner: root
-        group: root
-      notify: Restart singbox
-      when: _init == 'openrc'
-
-    - name: Deploy systemd service unit
-      template:
-        src: "{{ playbook_dir }}/../templates/singbox.service.j2"
-        dest: "/etc/systemd/system/{{ singbox_service }}.service"
-        mode: "0644"
-        owner: root
-        group: root
-      notify: Restart singbox
-      when: _init == 'systemd'
-      register: _sb_unit_sys
-
-    - name: Reload systemd after unit change
-      systemd:
-        daemon_reload: true
-      when: _init == 'systemd' and (_sb_unit_sys is defined and _sb_unit_sys is changed)
-
-    - name: Enable singbox (OpenRC default runlevel)
-      command: "rc-update add {{ singbox_service }} default"
-      register: _openrc_enable
-      changed_when: "'already installed' not in (_openrc_enable.stdout | default(''))"
-      when: _init == 'openrc'
-
-    - name: Enable singbox (systemd)
-      service:
-        name: "{{ singbox_service }}"
-        enabled: true
-      when: _init == 'systemd'
-
-    - name: Ensure singbox is started (OpenRC)
-      command: "rc-service {{ singbox_service }} start"
-      register: _openrc_start
-      changed_when: >-
-        'already started' not in (_openrc_start.stdout | default(''))
-        and 'started' in (_openrc_start.stdout | default(''))
-      when: _init == 'openrc'
-
-    - name: Ensure singbox is started (systemd)
-      service:
-        name: "{{ singbox_service }}"
-        state: started
-      when: _init == 'systemd'
+    - name: Deploy service unit and ensure running
+      ansible.builtin.include_tasks: tasks/deploy_service_unit.yml
+      vars:
+        messup_service_name: "{{ singbox_service }}"
+        messup_openrc_src: "{{ playbook_dir }}/../templates/singbox.openrc.j2"
+        messup_systemd_src: "{{ playbook_dir }}/../templates/singbox.service.j2"
+        messup_service_notify: Restart singbox
 
     - name: Cleanup download archive
       file:
@@ -472,19 +392,10 @@
       changed_when: false
       failed_when: false
 
-    - name: Check service status (OpenRC)
-      command: "rc-service {{ singbox_service }} status"
-      register: _svc_status
-      changed_when: false
-      failed_when: false
-      when: _init == 'openrc'
-
-    - name: Check service status (systemd)
-      command: "systemctl is-active {{ singbox_service }}"
-      register: _svc_status
-      changed_when: false
-      failed_when: false
-      when: _init == 'systemd'
+    - name: Check service status
+      ansible.builtin.include_tasks: tasks/check_service_status.yml
+      vars:
+        messup_service_name: "{{ singbox_service }}"
 
     - name: Deployment summary
       debug:
