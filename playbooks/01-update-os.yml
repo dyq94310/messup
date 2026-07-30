@@ -33,10 +33,10 @@
 
         - name: Show update result
           ansible.builtin.debug:
-            msg: "Alpine update result: {{ result_alpine.stdout }} / {{ result_alpine.stderr }}"
-          when: result_alpine is defined and result_alpine.stdout
+            msg: "Alpine update result: {{ result_alpine.stdout | default('') }} / {{ result_alpine.stderr | default('') }}"
+          when: result_alpine is defined
 
         - name: Show update result
           ansible.builtin.debug:
-            msg: "Debian update result: {{ result_debian.stdout }} / {{ result_debian.stderr }}"
-          when: result_debian is defined and result_debian.stdout
+            msg: "Debian update result: {{ result_debian.stdout | default('') }} / {{ result_debian.stderr | default('') }}"
+          when: result_debian is defined
