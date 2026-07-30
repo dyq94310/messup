@@ -34,7 +34,8 @@ env/
 
 # Editor / OS
 .idea/
-.vscode/
+.vscode/*
+!.vscode/settings.json
 *.swp
 *.swo
 *~
