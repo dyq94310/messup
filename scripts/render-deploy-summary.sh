@@ -2,6 +2,9 @@
 # Render a human-readable per-host deployment matrix for GitHub Actions.
 # The first inventory field is always the display name; ansible_host remains
 # an internal connection variable and is never intentionally rendered here.
+#
+# Matrix cells are planned scope (tags + inventory groups), not per-task success.
+# Row "结果" reflects SSH precheck + overall playbook exit code only.
 set -euo pipefail
 
 INVENTORY="${INVENTORY:-private-config/inventory/inventory.ini}"
@@ -57,6 +60,7 @@ fi
 singbox_hosts=$(csv_from_section singbox_nodes)
 smartdns_hosts=$(csv_from_section smartdns_nodes)
 nft_hosts=$(csv_from_section nft_nodes)
+probe_hosts=$(csv_from_section probe_nodes)
 
 # Empty limit means all hosts. Exact host limits are the normal generated form.
 # For group/pattern limits, fall back to the complete inventory so the summary
@@ -118,7 +122,7 @@ service_status() {
   elif contains_word "$UNREACHABLE" "$host"; then
     printf '不可达'
   else
-    printf '执行'
+    printf '计划'
   fi
 }
 
@@ -126,14 +130,14 @@ result_text=""
 case "$PLAYBOOK_RC" in
   0)
     if [ -n "$UNREACHABLE" ]; then
-      result_text="完成（存在不可达主机）"
+      result_text="流水线完成（存在不可达主机）"
     else
-      result_text="成功"
+      result_text="流水线成功"
     fi
     ;;
-  3) result_text="完成（存在不可达主机）" ;;
+  3) result_text="流水线完成（存在不可达主机）" ;;
   "") result_text="未执行或结果未知" ;;
-  *) result_text="失败（rc=$PLAYBOOK_RC）" ;;
+  *) result_text="流水线失败（rc=$PLAYBOOK_RC）" ;;
 esac
 
 target_count=$(printf '%s\n' "$target_hosts" | sed '/^$/d' | wc -l | tr -d ' ')
@@ -159,28 +163,32 @@ fi
   echo "| 本次服务 | ${service_scope} |"
   echo "| 最终结果 | ${result_text} |"
   echo ""
+  echo "> 服务列为**计划范围**（tags ∩  inventory 组），不是 per-task 成功。"
+  echo "> 「结果」= SSH 预检 + 整次 playbook 退出码；nft 无 CAP 等 soft-skip 不会单独标红，有能力却 apply 失败会使流水线失败。"
+  echo ""
   echo "## 节点操作明细"
   echo ""
-  echo "| 节点 | SSH | Python | SmartDNS | sing-box | nft | 结果 |"
-  echo "|---|---|---|---|---|---|---|"
+  echo "| 节点 | SSH | Python | SmartDNS | sing-box | nft | probe | 结果 |"
+  echo "|---|---|---|---|---|---|---|---|"
   while IFS= read -r host; do
     [ -z "$host" ] && continue
     ssh_state=$(host_status "$host")
     if [ "$ssh_state" = "不可达" ]; then
       row_result="不可达"
     elif [ "$PLAYBOOK_RC" != "" ] && [ "$PLAYBOOK_RC" != "0" ] && [ "$PLAYBOOK_RC" != "3" ]; then
-      row_result="失败"
+      row_result="流水线失败"
     elif [ "$ssh_state" = "未检查" ]; then
       row_result="未检查"
     else
-      row_result="成功"
+      row_result="流水线成功"
     fi
-    printf '| `%s` | %s | %s | %s | %s | %s | %s |\n' \
+    printf '| `%s` | %s | %s | %s | %s | %s | %s | %s |\n' \
       "$host" "$ssh_state" \
-      "$( [ "$ssh_state" = "不可达" ] && printf '不可达' || printf '执行' )" \
+      "$( [ "$ssh_state" = "不可达" ] && printf '不可达' || printf '计划' )" \
       "$(service_status "$host" smartdns "$smartdns_hosts")" \
       "$(service_status "$host" singbox "$singbox_hosts")" \
       "$(service_status "$host" nft "$nft_hosts")" \
+      "$(service_status "$host" probe "$probe_hosts")" \
       "$row_result"
   done <<< "$target_hosts"
 
@@ -215,5 +223,6 @@ if [ -n "$BARK_SUMMARY_FILE" ]; then
     echo "服务: ${service_scope}"
     echo "不可达节点: ${UNREACHABLE:-none}"
     echo "触发事件: ${EVENT_NAME:-unknown}"
+    echo "说明: 矩阵为计划范围，非 per-task"
   } > "$BARK_SUMMARY_FILE"
 fi

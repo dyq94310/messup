@@ -53,6 +53,7 @@
 - 自动部署跟 Git 变更，不修远程手工漂移；漂移用 `workflow_dispatch`
 - 用现有 tags 与 `--limit`；新机：SSH bootstrap →（`site.yml` 含 Python）→ 连通性 → 服务；CI 自动 `services.yml` 为 SSH → 连通性 → 服务
 - 仅一台 `singbox_cert_source=true`；禁止多源
+- nft：无 CAP/缺配置 soft-skip；preflight 通过后 apply 失败 hard-fail（见 `03-deploy-nft.yml`）
 - 密码/Token/私钥不进 playbook、模板、样例、日志
 
 ## 安全

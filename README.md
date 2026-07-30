@@ -381,7 +381,7 @@ nft list table ip forward
 | sudo 相关错误 | 本方案 root 直连 `ansible_become=false`；勿强行 sudo |
 | 预检不用 `ping` 模块 | 裸 Alpine/最小 Debian 可能无 Python；CI/本地用 `scripts/check-connectivity.sh`（`raw`） |
 | 某台 IP 不通 | 只 **警告并跳过**，其余主机继续部署；仅**全部**不可达才失败 |
-| `nft` Operation not permitted | 容器可能缺 `CAP_NET_ADMIN`：Proxmox 勿 drop `net_admin`；KVM 检查系统权限，重启后 `nft list tables` 应成功 |
+| `nft` Operation not permitted / soft-skip | 无 `CAP_NET_ADMIN` 时 playbook **soft-skip**（流水线可仍成功）；有权限但下发/apply/校验失败会 **hard-fail**。Proxmox 勿 drop `net_admin` |
 | Debian 服务未起来 | 查 `systemctl status singbox` / `journalctl -u singbox -n 50`；确认 unit 在 `/etc/systemd/system/` |
 | sing-box 下载 404 / 无法执行 | Alpine 应用 musl 包、Debian 用 glibc；确认 `singbox_version` 与 release 资产名一致 |
 
