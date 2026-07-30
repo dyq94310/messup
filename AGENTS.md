@@ -51,7 +51,8 @@
 - Alpine=OpenRC；Debian/Ubuntu=systemd；root 直连，无故勿 `become`
 - 幂等：配置未变不强制重启；版本变才重下二进制
 - 自动部署跟 Git 变更，不修远程手工漂移；漂移用 `workflow_dispatch`
-- 用现有 tags 与 `--limit`；新机：SSH bootstrap →（`site.yml` 含 Python）→ 连通性 → 服务；CI 自动 `services.yml` 为 SSH → 连通性 → 服务
+- 用现有 tags 与 `--limit`；新机：SSH bootstrap → 连通性 → Python → 服务
+- 自动 `deploy_plan`：SSH → 连通性 → **一次** `00-bootstrap-python` → `services.yml`；全量/`site.yml` 仍自带 Python bootstrap
 - 仅一台 `singbox_cert_source=true`；禁止多源
 - nft：无 CAP/缺配置 soft-skip；preflight 通过后 apply 失败 hard-fail（见 `03-deploy-nft.yml`）
 - 密码/Token/私钥不进 playbook、模板、样例、日志

@@ -1,6 +1,7 @@
 ---
-# Service-only entry point for scoped automatic deployments. SSH and Python
-# bootstrap run once before this playbook in the caller workflow or deploy.sh.
+# Service-only entry point for scoped automatic deployments.
+# Caller (ansible-deploy.yml) runs SSH bootstrap, connectivity, then
+# 00-bootstrap-python once for planned hosts before importing these plays.
 - name: Import SmartDNS deploy
   import_playbook: 02-deploy-smartdns.yml
   tags: [smartdns, dns]

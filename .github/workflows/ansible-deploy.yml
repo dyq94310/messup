@@ -294,12 +294,12 @@ jobs:
           LIMIT="${{ needs.detect.outputs.limit }}"
           REACH_LIMIT="${{ steps.conn.outputs.reachable_limit }}"
           run_playbook() {
-            local tag="$1" hosts="$2"
+            local playbook="$1" hosts="$2"
+            shift 2
             local -a extra=(--limit "$hosts")
-            local playbook="playbooks/site.yml"
-            if [ -n "$tag" ]; then
-              extra+=(--tags "$tag")
-              [ -n "$DEPLOY_PLAN" ] && playbook="playbooks/services.yml"
+            # remaining args are optional --tags values
+            if [ "$#" -gt 0 ] && [ -n "${1:-}" ]; then
+              extra+=(--tags "$1")
             fi
             echo "Running: ansible-playbook ${playbook} ${extra[*]}"
             ansible-playbook \
@@ -310,21 +310,44 @@ jobs:
               "${extra[@]}"
           }
 
+          filter_reachable() {
+            local hosts="$1"
+            if [ -z "$REACH_LIMIT" ] || [ -z "$hosts" ]; then
+              printf '%s' "$hosts"
+              return
+            fi
+            local host out=""
+            local -a host_list
+            IFS=':' read -r -a host_list <<< "$hosts"
+            for host in "${host_list[@]}"; do
+              [ -z "$host" ] && continue
+              case ":${REACH_LIMIT}:" in
+                *":${host}:"*) out="${out}${out:+:}${host}" ;;
+              esac
+            done
+            printf '%s' "$out"
+          }
+
           set +e
           if [ -n "${DEPLOY_PLAN}" ]; then
             rc=0
             jq -e '.targets | type == "array"' <<< "$DEPLOY_PLAN" >/dev/null || rc=$?
+            # services.yml has no Python bootstrap; install once for all planned hosts.
+            if [ "$rc" -eq 0 ]; then
+              plan_hosts=$(jq -r '[.targets[]?.hosts[]?] | unique | join(":")' <<< "$DEPLOY_PLAN")
+              plan_hosts=$(filter_reachable "$plan_hosts")
+              if [ -n "$plan_hosts" ]; then
+                run_playbook playbooks/00-bootstrap-python.yml "$plan_hosts"
+                rc=$?
+              fi
+            fi
             while IFS= read -r target; do
               [ "$rc" -eq 0 ] || break
               tag=$(jq -r '.tag' <<< "$target")
               hosts=$(jq -r '.hosts | join(":")' <<< "$target")
-              if [ -n "$REACH_LIMIT" ]; then
-                reachable_json=$(printf '%s' "$REACH_LIMIT" | tr ':' '\n' | jq -R . | jq -s .)
-                hosts=$(jq -r --argjson reachable "$reachable_json" \
-                  '.hosts | map(select(. as $host | $reachable | index($host))) | join(":")' <<< "$target")
-              fi
+              hosts=$(filter_reachable "$hosts")
               [ -z "$hosts" ] && continue
-              run_playbook "$tag" "$hosts"
+              run_playbook playbooks/services.yml "$hosts" "$tag"
               rc=$?
             done < <(jq -c '.targets[]' <<< "$DEPLOY_PLAN")
           else
@@ -334,7 +357,8 @@ jobs:
             elif [ -z "$hosts" ] || [ "$hosts" = "<all>" ]; then
               hosts="all_nodes"
             fi
-            run_playbook "${TAGS:-}" "$hosts"
+            # site.yml already includes bootstrap-python (tags: always).
+            run_playbook playbooks/site.yml "$hosts" "${TAGS:-}"
             rc=$?
           fi
           set -e

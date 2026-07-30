@@ -251,7 +251,7 @@ git add -A && git commit -m "add node-b" && git push
 | push `messup-private` → `main` | 推断服务级计划 → `repository_dispatch` → messup 分服务部署 |
 | Actions 手动 Run workflow | 可填 `limit` / `tags` |
 
-**自动部署顺序**（`repository_dispatch` / 部分手动）：`00-bootstrap-ssh`（密钥 / `bootstrap_password`）→ `check-connectivity` → 有 `deploy_plan` 时用 `services.yml` 分服务；全量或未带 plan 时用 `site.yml`（含 Python bootstrap 等）。密码任务 `no_log`。
+**自动部署顺序**（`repository_dispatch` / 部分手动）：`00-bootstrap-ssh`（密钥 / `bootstrap_password`）→ `check-connectivity` → 有 `deploy_plan` 时先 **`00-bootstrap-python`（计划主机一次）** 再 `services.yml` 分服务；全量或未带 plan 时用 `site.yml`（自带 Python bootstrap 等）。密码任务 `no_log`。
 
 **私有仓服务推断示例**（权威实现：`messup-private` 的 `detect-deploy-scope.py`）
 
@@ -281,7 +281,7 @@ git add -A && git commit -m "add node-b" && git push
 
 高风险 private 变更（如 inventory / `.deployignore`）的 `production` Environment 审批发生在 checkout 私有配置、写入 SSH 私钥和连接节点之前（若仓库已配置 Required reviewers）。
 
-> 自动路径：SSH bootstrap → 连通性 → `services.yml`。全量/`site.yml` 仍包含 Python bootstrap 等步骤。`scripts/classify-deploy-change.sh` 的 git-diff 规则仅供本地说明，不因本仓 push 触发部署。
+> 自动路径：SSH bootstrap → 连通性 → Python bootstrap → `services.yml`。全量/`site.yml` 仍自带 Python bootstrap。`scripts/classify-deploy-change.sh` 的 git-diff 规则仅供本地说明，不因本仓 push 触发部署。
 
 ---
 
