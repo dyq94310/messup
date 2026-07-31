@@ -23,7 +23,7 @@
     - name: Resolve private config paths
       set_fact:
         _singbox_cfg_src: "{{ private_config_temp }}/singbox/{{ deployment_env }}/config.json.j2"
-        _singbox_wireguard_src: "{{ private_config_temp }}/singbox/{{ deployment_env }}/wireguard.yml"
+        _singbox_wireguard_src: "{{ private_config_temp }}/singbox/wireguard.json"
         _singbox_port_profiles_src: "{{ private_config_temp }}/singbox/port_profiles.json"
 
     - name: Load sing-box port profiles
@@ -85,32 +85,39 @@
             3) inventory 中 deployment_env 与目录名一致
             4) CI 是否设置 -e private_config_temp=...
 
-    - name: Check optional sing-box WireGuard variables
+    - name: Check shared sing-box WireGuard variables
       stat:
         path: "{{ _singbox_wireguard_src }}"
       delegate_to: localhost
       become: false
       register: _wireguard_stat
 
-    - name: Load sing-box WireGuard variables
-      include_vars:
-        file: "{{ _singbox_wireguard_src }}"
-        name: _singbox_wireguard_vars
-      when: _wireguard_stat.stat.exists and _wireguard_stat.stat.isreg
-
-    - name: Validate ix WireGuard variables
+    - name: Require shared sing-box WireGuard variables
       assert:
         that:
           - _wireguard_stat.stat.exists
           - _wireguard_stat.stat.isreg
+        fail_msg: >-
+          ❌ 找不到共享 WireGuard 配置: {{ _singbox_wireguard_src }}
+
+    - name: Load shared sing-box WireGuard variables
+      include_vars:
+        file: "{{ _singbox_wireguard_src }}"
+        name: _singbox_wireguard_vars
+
+    - name: Validate sing-box WireGuard endpoint variables
+      assert:
+        that:
           - _singbox_wireguard_vars.singbox_wireguard is mapping
-          - _singbox_wireguard_vars.singbox_wireguard.private_key is string
-          - _singbox_wireguard_vars.singbox_wireguard.address is sequence
+          - _singbox_wireguard_vars.singbox_wireguard.endpoints is mapping
           - _singbox_wireguard_vars.singbox_wireguard.peers is mapping
         fail_msg: >-
-          ❌ {{ _singbox_wireguard_src }} 缺失或格式无效，ix 环境需要
-          singbox_wireguard.private_key/address/peers。
-      when: deployment_env == 'ix'
+          ❌ {{ _singbox_wireguard_src }} 格式无效。
+
+    - name: Resolve current sing-box WireGuard endpoint
+      set_fact:
+        _singbox_wireguard_enabled: "{{ inventory_hostname in _singbox_wireguard_vars.singbox_wireguard.endpoints }}"
+        _singbox_wireguard_endpoint: "{{ _singbox_wireguard_vars.singbox_wireguard.endpoints.get(inventory_hostname, {}) }}"
 
   tasks:
     - name: Detect OS / init
