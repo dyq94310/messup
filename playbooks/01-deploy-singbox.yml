@@ -110,7 +110,7 @@
         that:
           - _singbox_wireguard_vars.singbox_wireguard is mapping
           - _singbox_wireguard_vars.singbox_wireguard.endpoints is mapping
-          - _singbox_wireguard_vars.singbox_wireguard.peers is mapping
+          - _singbox_wireguard_vars.singbox_wireguard.device_peers is mapping
         fail_msg: >-
           ❌ {{ _singbox_wireguard_src }} 格式无效。
 
