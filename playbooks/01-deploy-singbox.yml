@@ -10,19 +10,9 @@
   tags: [singbox, proxy]
 
   pre_tasks:
-    - name: Require deployment_env
-      assert:
-        that:
-          - deployment_env is defined
-          - deployment_env | length > 0
-        fail_msg: >-
-          ❌ Host {{ inventory_hostname }} 缺少 deployment_env。
-          请在 inventory 中设置，例如: deployment_env=rear
-        success_msg: "deployment_env={{ deployment_env }}"
-
     - name: Resolve private config paths
       set_fact:
-        _singbox_cfg_src: "{{ private_config_temp }}/singbox/{{ deployment_env }}/config.json.j2"
+        _singbox_cfg_src: "{{ private_config_temp }}/singbox/config.json.j2"
         _singbox_wireguard_src: "{{ private_config_temp }}/singbox/wireguard.json"
         _singbox_port_profiles_src: "{{ private_config_temp }}/singbox/port_profiles.json"
 
@@ -53,16 +43,19 @@
       assert:
         that:
           - singbox_ports is mapping
+          - singbox_ports.keys() | list | sort == ['hy2', 'reality', 'snell']
           - (singbox_ports.values() | list | select('integer') | list | length) == (singbox_ports.values() | list | length)
           - >-
             (singbox_ports.values() | list
-              | select('integer')
-              | select('ge', 1)
-              | select('le', 65535)
-              | list | length) == (singbox_ports.values() | list | length)
+            | select('integer')
+            | select('ge', 1)
+            | select('le', 65535)
+            | list | length) == (singbox_ports.values() | list | length)
+          - singbox_ports.snell != singbox_ports.reality
         fail_msg: >-
           ❌ sing-box port profile={{ _singbox_selected_profile }} 无效：
-          端口必须是 1-65535 的整数。
+          必须且只能包含 snell、reality、hy2；端口必须为 1-65535 的整数，
+          且 Snell 与 Reality 不能共用 TCP 端口。
         success_msg: "singbox_port_profile={{ _singbox_selected_profile }} ports={{ singbox_ports }}"
 
     - name: Ensure private config exists on control node
@@ -81,9 +74,8 @@
           ❌ 找不到节点配置: {{ _singbox_cfg_src }}
           请确认:
             1) messup-private 已 checkout / 软链到 private-config
-            2) 存在 singbox/{{ deployment_env }}/config.json.j2
-            3) inventory 中 deployment_env 与目录名一致
-            4) CI 是否设置 -e private_config_temp=...
+            2) 存在 singbox/config.json.j2
+            3) CI 是否设置 -e private_config_temp=...
 
     - name: Check shared sing-box WireGuard variables
       stat:

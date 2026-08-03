@@ -29,7 +29,7 @@
 │  messup-private │ ──repository_ │  Alpine/Debian LXC/KVM │
 │  (private)      │   _dispatch──►│  sing-box/smartdns/nft│
 │  inventory/     │               └──────────────────────┘
-│  singbox/<env>/ │
+│  singbox/       │
 │  smartdns/      │
 │  nft/<env>/     │
 └─────────────────┘
@@ -39,8 +39,8 @@
 
 | inventory | 私有配置 |
 |-----------|----------|
-| `deployment_env=rear` | `singbox/rear/` + `nft/rear/mappings.txt` |
-| `deployment_env=pre\|ix` | 对应 `nft/<env>/mappings.txt`（及可选 singbox） |
+| （任意） | `singbox/config.json.j2` + `singbox/port_profiles.json` |
+| `deployment_env=rear\|pre\|ix` | 对应 `nft/<env>/mappings.txt` |
 | SmartDNS（全局） | 所有节点共用 `smartdns/smartdns.conf`，不分 env |
 
 - 架构自动识别：`x86_64→amd64` / `aarch64→arm64`（sing-box）；SmartDNS 使用 `x86_64` / `aarch64` 官方包名
@@ -85,7 +85,7 @@ messup-private/                      # 私有仓（本地/CI 注入为 private-c
 ├── inventory/
 │   ├── inventory.ini
 │   └── group_vars/all.yml           # 版本号 + nft 默认参数
-├── singbox/<env>/config.json.j2         # 统一模板，端口引用 singbox_ports
+├── singbox/config.json.j2               # 统一模板，端口引用 singbox_ports
 ├── singbox/port_profiles.json           # 默认及特殊 NAT 端口映射
 ├── ssh/public_keys/*.pub             # 额外个人电脑 SSH 公钥，下发到所有 all_nodes
 ├── smartdns/smartdns.conf           # 全局共用
@@ -197,7 +197,7 @@ cd messup
 
 ```bash
 # 1) 改私有配置
-vim ../messup-private/singbox/rear/config.json.j2
+vim ../messup-private/singbox/config.json.j2
 vim ../messup-private/smartdns/smartdns.conf
 
 # 2A) 推送私有仓 → 自动 CI 部署（对应服务）
@@ -228,11 +228,11 @@ git add -A && git commit -m "bump sing-box / update inventory" && git push
 全部在 **messup-private**：
 
 ```bash
-mkdir -p singbox/node-b nft/node-b
-cp singbox/rear/config.json.j2 singbox/node-b/config.json.j2
+mkdir -p nft/node-b
+# singbox/config.json.j2 全部节点共用；在 port_profiles.json 增加 node-b 的端口 profile
 # smartdns 全局共用 smartdns/smartdns.conf，无需按节点复制
 # inventory/inventory.ini 增加一行（新机带临时密码即可自动装钥）:
-# 10.0.0.30 ansible_port=22 deployment_env=node-b bootstrap_password=面板初始密码
+# 10.0.0.30 ansible_port=22 deployment_env=node-b singbox_port_profile=node-b bootstrap_password=面板初始密码
 # 确保已有且仅有一台节点标记 singbox_cert_source=true，供新节点同步 /etc/cert
 git add -A && git commit -m "add node-b" && git push
 # CI: 00-bootstrap-ssh → 连通性 → site（密钥优先，密码仅作首次回退）
@@ -299,7 +299,7 @@ git add -A && git commit -m "add node-b" && git push
 
 ```bash
 # messup-private
-vim singbox/rear/config.json.j2    # → tags=singbox，配置变了会 Restart singbox
+vim singbox/config.json.j2         # → tags=singbox，配置变了会 Restart singbox
 vim smartdns/smartdns.conf         # → tags=smartdns（全局共用）
 vim nft/rear/mappings.txt         # → tags=nft（每次成功部署都会 re-apply）
 git add -A && git commit -m "update rear" && git push
