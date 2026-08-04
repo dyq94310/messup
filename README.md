@@ -68,7 +68,8 @@ messup/                              # 公开仓（无主机清单）
 │   ├── 01-deploy-singbox.yml
 │   ├── 02-deploy-smartdns.yml
 │   ├── 03-deploy-nft.yml
-│   └── 04-deploy-probe.yml        # 按节点私有命令、hash 幂等部署 probe
+│   ├── 04-deploy-probe.yml        # 按节点私有命令、hash 幂等部署 probe
+│   └── 05-deploy-realm.yml        # 可选 Realm DDNS TCP relay
 ├── templates/
 │   ├── singbox.openrc.j2 / singbox.service.j2
 │   ├── smartdns.openrc.j2 / smartdns.service.j2
@@ -87,11 +88,18 @@ messup-private/                      # 私有仓（本地/CI 注入为 private-c
 │   └── group_vars/all.yml           # 版本号 + nft 默认参数
 ├── singbox/config.json.j2               # 统一模板，端口引用 singbox_ports
 ├── singbox/port_profiles.json           # 默认及特殊 NAT 端口映射
+├── realm/vars.yml                       # Realm 版本 / 路径 / DNS 默认值
+├── realm/endpoints.yml                  # 按节点管理 Realm relay 规则
+├── realm/config.json.j2                 # 可选 Realm relay 配置
 ├── ssh/public_keys/*.pub             # 额外个人电脑 SSH 公钥，下发到所有 all_nodes
 ├── smartdns/smartdns.conf           # 全局共用
 ├── nft/apply.sh                     # 唯一业务逻辑
 └── nft/<env>/mappings.txt           # proto lport dip dport
 ```
+
+Realm 仅部署到私有 inventory 的 `realm_nodes`。`realm/endpoints.yml` 按节点名
+管理 relay 规则，`remote` 可以使用 DDNS 域名；配置的 DNS cache 最大 TTL 为
+300 秒，已建立的连接不会迁移，新连接会在缓存过期后重新解析。
 
 ---
 

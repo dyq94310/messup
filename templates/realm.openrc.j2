@@ -1,0 +1,28 @@
+#!/sbin/openrc-run
+# Managed by Ansible — do not edit manually
+
+description="Realm TCP relay"
+command="{{ realm_bin }}"
+command_args="-c {{ realm_config }}"
+command_background=true
+pidfile="/run/${RC_SVCNAME}.pid"
+supervisor=supervise-daemon
+respawn_delay=2
+respawn_max=0
+
+depend() {
+    need net
+    after firewall
+}
+
+start_pre() {
+    checkpath --directory --mode 0755 /run
+    if [ ! -x "${command}" ]; then
+        eerror "Realm binary not found: ${command}"
+        return 1
+    fi
+    if [ ! -f "{{ realm_config }}" ]; then
+        eerror "Realm config not found: {{ realm_config }}"
+        return 1
+    fi
+}

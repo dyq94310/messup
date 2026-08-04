@@ -4,7 +4,7 @@
 
 ## 目标
 
-向 Alpine / Debian / Ubuntu 节点部署：sing-box、SmartDNS、nft 端口转发、probe。
+向 Alpine / Debian / Ubuntu 节点部署：sing-box、SmartDNS、nft 端口转发、Realm relay、probe。
 
 敏感配置只在 `messup-private`，经 `private-config/` 软链或 CI checkout 注入。禁止复制、缓存或硬编码私有内容。
 
@@ -12,7 +12,7 @@
 
 | 路径 | 职责 |
 | --- | --- |
-| `playbooks/` | `site.yml`（全量/手动）、`services.yml`（自动服务计划）、bootstrap 与各服务 |
+| `playbooks/` | `site.yml`（全量/手动）、`services.yml`（自动服务计划）、bootstrap 与各服务；Realm 为可选服务 |
 | `templates/` | OpenRC / systemd / 服务模板 |
 | `scripts/` | 本地部署、连通性、变更分类、摘要 |
 | `.github/workflows/` | `ci.yml` 静态校验；`ansible-deploy.yml` 生产部署；`bark-notify.yml` 通知；`clean-history.yml` 非部署 |

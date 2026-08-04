@@ -14,6 +14,10 @@
   import_playbook: 03-deploy-nft.yml
   tags: [nft, nat]
 
+- name: Import Realm relay deploy
+  import_playbook: 05-deploy-realm.yml
+  tags: [realm, relay]
+
 - name: Import probe deploy
   import_playbook: 04-deploy-probe.yml
   tags: [probe]

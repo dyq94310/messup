@@ -1,0 +1,288 @@
+---
+# Deploy optional Realm TCP relay on realm_nodes.
+# Realm resolves remote hostnames in user space, so DDNS changes do not require
+# rebuilding nft DNAT rules.
+- name: Deploy Realm relay
+  hosts: realm_nodes
+  become: false
+  gather_facts: true
+  ignore_unreachable: true
+  any_errors_fatal: false
+  tags: [realm, relay]
+
+  pre_tasks:
+    - name: Resolve Realm shared variables path
+      set_fact:
+        _realm_vars_src: "{{ private_config_temp }}/realm/vars.yml"
+
+    - name: Check Realm shared variables exist on control node
+      stat:
+        path: "{{ _realm_vars_src }}"
+      delegate_to: localhost
+      become: false
+      register: _realm_vars_stat
+
+    - name: Fail if Realm shared variables are missing
+      assert:
+        that:
+          - _realm_vars_stat.stat.exists
+          - _realm_vars_stat.stat.isreg
+        fail_msg: "❌ 找不到 Realm 共享变量: {{ _realm_vars_src }}"
+
+    - name: Load Realm shared variables
+      include_vars:
+        file: "{{ _realm_vars_src }}"
+        name: _realm_vars
+      delegate_to: localhost
+      become: false
+
+    - name: Apply Realm shared variables
+      set_fact:
+        realm_version: "{{ _realm_vars.realm_version }}"
+        realm_bin: "{{ _realm_vars.realm_bin }}"
+        realm_config: "{{ _realm_vars.realm_config }}"
+        realm_service: "{{ _realm_vars.realm_service }}"
+        realm_install_dir: "{{ _realm_vars.realm_install_dir }}"
+        realm_dns_nameservers: "{{ _realm_vars.realm_dns_nameservers }}"
+
+    - name: Validate Realm shared variables
+      assert:
+        that:
+          - realm_version is string
+          - realm_bin is string
+          - realm_config is string
+          - realm_service is string
+          - realm_install_dir is string
+          - realm_dns_nameservers is sequence
+          - realm_dns_nameservers | length > 0
+        fail_msg: "❌ {{ _realm_vars_src }} 格式无效。"
+
+    - name: Resolve Realm endpoint rules path
+      set_fact:
+        _realm_endpoints_src: "{{ private_config_temp }}/realm/endpoints.yml"
+
+    - name: Check Realm endpoint rules exist on control node
+      stat:
+        path: "{{ _realm_endpoints_src }}"
+      delegate_to: localhost
+      become: false
+      register: _realm_endpoints_stat
+
+    - name: Fail if Realm endpoint rules are missing
+      assert:
+        that:
+          - _realm_endpoints_stat.stat.exists
+          - _realm_endpoints_stat.stat.isreg
+        fail_msg: "❌ 找不到 Realm 节点规则: {{ _realm_endpoints_src }}"
+
+    - name: Load Realm endpoint rules
+      include_vars:
+        file: "{{ _realm_endpoints_src }}"
+        name: _realm_endpoint_vars
+      delegate_to: localhost
+      become: false
+
+    - name: Validate Realm endpoint rules mapping
+      assert:
+        that:
+          - _realm_endpoint_vars.realm_endpoints_by_node is mapping
+          - inventory_hostname in _realm_endpoint_vars.realm_endpoints_by_node
+        fail_msg: >-
+          ❌ {{ _realm_endpoints_src }} 必须包含 {{ inventory_hostname }} 的非空 Realm 节点规则。
+
+    - name: Select Realm endpoint rules for current node
+      set_fact:
+        realm_endpoints: "{{ _realm_endpoint_vars.realm_endpoints_by_node[inventory_hostname] }}"
+
+    - name: Require Realm endpoints
+      assert:
+        that:
+          - realm_endpoints is sequence
+          - realm_endpoints | length > 0
+          - realm_endpoints | select('mapping') | list | length == realm_endpoints | length
+          - realm_endpoints | selectattr('listen', 'defined') | list | length == realm_endpoints | length
+          - realm_endpoints | selectattr('remote', 'defined') | list | length == realm_endpoints | length
+        fail_msg: >-
+          ❌ {{ _realm_endpoints_src }} 中 {{ inventory_hostname }} 的规则无效，
+          每项需要 listen 和 remote。
+
+    - name: Resolve Realm private paths
+      set_fact:
+        _realm_cfg_src: "{{ private_config_temp }}/realm/config.json.j2"
+
+    - name: Check Realm config exists on control node
+      stat:
+        path: "{{ _realm_cfg_src }}"
+      delegate_to: localhost
+      become: false
+      register: _realm_cfg_stat
+
+    - name: Fail if Realm config is missing
+      assert:
+        that:
+          - _realm_cfg_stat.stat.exists
+          - _realm_cfg_stat.stat.isreg
+        fail_msg: "❌ 找不到 Realm 配置模板: {{ _realm_cfg_src }}"
+
+  tasks:
+    - name: Detect OS / init
+      ansible.builtin.include_tasks: tasks/detect_os.yml
+
+    - name: Resolve Realm release target
+      set_fact:
+        realm_target: >-
+          {{
+            'x86_64-unknown-linux-musl' if (_is_alpine | bool and ansible_facts['architecture'] in ['x86_64', 'amd64']) else
+            'x86_64-unknown-linux-gnu' if (not (_is_alpine | bool) and ansible_facts['architecture'] in ['x86_64', 'amd64']) else
+            'aarch64-unknown-linux-musl' if (_is_alpine | bool and ansible_facts['architecture'] in ['aarch64', 'arm64']) else
+            'aarch64-unknown-linux-gnu' if (not (_is_alpine | bool) and ansible_facts['architecture'] in ['aarch64', 'arm64']) else
+            'armv7-unknown-linux-musleabihf' if (_is_alpine | bool and ansible_facts['architecture'] in ['armv7l', 'armv7']) else
+            'armv7-unknown-linux-gnueabihf' if (not (_is_alpine | bool) and ansible_facts['architecture'] in ['armv7l', 'armv7']) else
+            'unknown'
+          }}
+
+    - name: Fail on unsupported Realm target
+      fail:
+        msg: >-
+          ❌ 不支持 Realm 平台：os={{ ansible_facts['os_family'] | default('?') }}
+          arch={{ ansible_facts['architecture'] | default('?') }}
+      when: realm_target == 'unknown'
+
+    - name: Resolve Realm release paths
+      set_fact:
+        _realm_archive: "/tmp/realm-{{ realm_version }}-{{ realm_target }}.tar.gz"
+        _realm_extract_dir: "/tmp/realm-{{ realm_version }}-{{ realm_target }}"
+
+    - name: Ensure Realm directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+        owner: root
+        group: root
+      loop:
+        - "{{ realm_install_dir }}"
+        - "{{ realm_config | dirname }}"
+
+    - name: Check installed Realm version
+      command: "{{ realm_bin }} --version"
+      register: _realm_installed
+      changed_when: false
+      failed_when: false
+
+    - name: Decide whether Realm binary install is needed
+      set_fact:
+        _realm_need_install: >-
+          {{ _realm_installed.rc != 0 or realm_version not in (_realm_installed.stdout | default('')) }}
+
+    - name: Download Realm release
+      get_url:
+        url: "https://github.com/zhboner/realm/releases/download/v{{ realm_version }}/realm-{{ realm_target }}.tar.gz"
+        dest: "{{ _realm_archive }}"
+        mode: "0644"
+        force: true
+        timeout: 120
+      register: _realm_download
+      retries: 3
+      delay: 5
+      until: _realm_download is succeeded
+      when: _realm_need_install | bool
+
+    - name: Reset Realm extraction directory
+      file:
+        path: "{{ _realm_extract_dir }}"
+        state: absent
+      when: _realm_need_install | bool
+
+    - name: Create Realm extraction directory
+      file:
+        path: "{{ _realm_extract_dir }}"
+        state: directory
+        mode: "0755"
+      when: _realm_need_install | bool
+
+    - name: Extract Realm release
+      unarchive:
+        src: "{{ _realm_archive }}"
+        dest: "{{ _realm_extract_dir }}"
+        remote_src: true
+      when: _realm_need_install | bool
+
+    - name: Install Realm binary
+      copy:
+        src: "{{ _realm_extract_dir }}/realm"
+        dest: "{{ realm_bin }}"
+        remote_src: true
+        mode: "0755"
+        owner: root
+        group: root
+      when: _realm_need_install | bool
+
+    - name: Ensure Realm binary executable
+      file:
+        path: "{{ realm_bin }}"
+        state: file
+        mode: "0755"
+        owner: root
+        group: root
+
+    - name: Render Realm configuration
+      template:
+        src: "{{ _realm_cfg_src }}"
+        dest: "{{ realm_config }}"
+        mode: "0600"
+        owner: root
+        group: root
+      notify: Restart realm
+
+    - name: Deploy Realm service unit and ensure running
+      ansible.builtin.include_tasks: tasks/deploy_service_unit.yml
+      vars:
+        messup_service_name: "{{ realm_service }}"
+        messup_openrc_src: "{{ playbook_dir }}/../templates/realm.openrc.j2"
+        messup_systemd_src: "{{ playbook_dir }}/../templates/realm.service.j2"
+        messup_service_notify: Restart realm
+
+    - name: Check Realm version
+      command: "{{ realm_bin }} --version"
+      register: _realm_version_out
+      changed_when: false
+
+    - name: Check Realm service status
+      ansible.builtin.include_tasks: tasks/check_service_status.yml
+      vars:
+        messup_service_name: "{{ realm_service }}"
+
+    - name: Cleanup Realm temporary files
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ _realm_archive }}"
+        - "{{ _realm_extract_dir }}"
+      when: _realm_need_install | bool
+
+    - name: Realm deployment summary
+      debug:
+        msg:
+          - "✅ Realm relay deployed"
+          - "  host:     {{ inventory_hostname }}"
+          - "  version:  {{ realm_version }}"
+          - "  target:   {{ realm_target }}"
+          - "  binary:   {{ realm_bin }}"
+          - "  config:   {{ realm_config }}"
+          - "  endpoints: {{ realm_endpoints | length }} TCP"
+          - "  service:  {{ _svc_status.stdout | default('n/a') | trim }}"
+
+  handlers:
+    - name: Restart realm (OpenRC)
+      listen: Restart realm
+      command: "rc-service {{ realm_service }} restart"
+      when: _init == 'openrc'
+
+    - name: Restart realm (systemd)
+      listen: Restart realm
+      service:
+        name: "{{ realm_service }}"
+        state: restarted
+      when: _init == 'systemd'
