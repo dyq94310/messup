@@ -108,8 +108,13 @@
 
     - name: Resolve current sing-box WireGuard endpoint
       set_fact:
-        _singbox_wireguard_enabled: "{{ inventory_hostname in _singbox_wireguard_vars.singbox_wireguard.endpoints }}"
         _singbox_wireguard_endpoint: "{{ _singbox_wireguard_vars.singbox_wireguard.endpoints.get(inventory_hostname, {}) }}"
+        _singbox_wireguard_enabled: >-
+          {{
+            _singbox_wireguard_vars.singbox_wireguard.endpoints
+            .get(inventory_hostname, {})
+            .get('enabled', false) | bool
+          }}
 
   tasks:
     - name: Detect OS / init
