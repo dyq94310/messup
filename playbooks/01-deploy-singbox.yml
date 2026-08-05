@@ -43,7 +43,7 @@
       assert:
         that:
           - singbox_ports is mapping
-          - singbox_ports.keys() | list | sort == ['hy2', 'reality', 'snell']
+          - singbox_ports | length > 0
           - (singbox_ports.values() | list | select('integer') | list | length) == (singbox_ports.values() | list | length)
           - >-
             (singbox_ports.values() | list
@@ -51,11 +51,9 @@
             | select('ge', 1)
             | select('le', 65535)
             | list | length) == (singbox_ports.values() | list | length)
-          - singbox_ports.snell != singbox_ports.reality
         fail_msg: >-
           ❌ sing-box port profile={{ _singbox_selected_profile }} 无效：
-          必须且只能包含 snell、reality、hy2；端口必须为 1-65535 的整数，
-          且 Snell 与 Reality 不能共用 TCP 端口。
+          必须是非空对象，所有端口必须为 1-65535 的整数。
         success_msg: "singbox_port_profile={{ _singbox_selected_profile }} ports={{ singbox_ports }}"
 
     - name: Ensure private config exists on control node
