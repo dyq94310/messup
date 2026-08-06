@@ -1,5 +1,5 @@
 ---
-# 一键全量部署：SSH bootstrap → Python → system timezone → SmartDNS → Sing-box → nft → probe
+# 一键全量部署：SSH bootstrap → Python → system timezone → SmartDNS → Sing-box → chrony → nft → probe
 # 用法:
 #   ansible-playbook playbooks/site.yml
 #   ansible-playbook playbooks/site.yml --limit <节点名>
@@ -7,6 +7,8 @@
 #   ansible-playbook playbooks/site.yml --tags smartdns
 #   ansible-playbook playbooks/site.yml --tags nft
 #   ansible-playbook playbooks/site.yml --tags singbox,smartdns,nft
+#   ansible-playbook playbooks/site.yml --tags chrony --limit <节点名>
+#   ansible-playbook playbooks/site.yml --tags chrony_set_time --limit <节点名>
 # 新机可在 inventory 写 bootstrap_password；密钥优先，失败再用密码装公钥。
 
 - name: Import SSH bootstrap (key or bootstrap_password)
@@ -28,6 +30,10 @@
 - name: Import SmartDNS deploy
   import_playbook: 02-deploy-smartdns.yml
   tags: [smartdns, dns]
+
+- name: Import chrony deploy
+  import_playbook: 06-deploy-chrony.yml
+  tags: [chrony, ntp]
 
 - name: Import Sing-box deploy
   import_playbook: 01-deploy-singbox.yml

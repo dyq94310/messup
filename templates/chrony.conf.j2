@@ -1,0 +1,9 @@
+# Managed by Ansible. This host deliberately has no external NTP sources.
+driftfile /var/lib/chrony/chrony.drift
+rtcsync
+manual
+local stratum 10 orphan
+
+# Serve only local processes, including sing-box on this host.
+bindaddress 127.0.0.1
+allow 127.0.0.1

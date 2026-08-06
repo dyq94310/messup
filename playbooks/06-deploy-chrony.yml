@@ -1,0 +1,118 @@
+---
+# Deploy a localhost-only chrony server for hosts that cannot use external NTP.
+- name: Deploy chrony on chrony nodes
+  hosts: chrony_nodes
+  become: false
+  gather_facts: true
+  ignore_unreachable: true
+  any_errors_fatal: false
+  tags: [chrony, ntp]
+
+  tasks:
+    - name: Detect OS / init
+      ansible.builtin.include_tasks: tasks/detect_os.yml
+
+    - name: Fail on unsupported OS
+      ansible.builtin.fail:
+        msg: >-
+          chrony only supports Alpine or Debian/Ubuntu.
+          os_family={{ ansible_facts['os_family'] | default('?') }}
+          pkg_mgr={{ ansible_facts['pkg_mgr'] | default('?') }}
+      when: _init == 'unknown'
+
+    - name: Ensure Debian python for apt module
+      ansible.builtin.include_tasks: tasks/ensure_debian_python.yml
+
+    - name: Gather installed packages
+      ansible.builtin.package_facts:
+        manager: auto
+
+    - name: Install chrony when absent
+      ansible.builtin.include_tasks: tasks/install_host_packages.yml
+      vars:
+        messup_apk_packages:
+          - chrony
+        messup_apt_packages:
+          - chrony
+      when: "'chrony' not in ansible_facts.packages"
+
+    - name: Resolve chrony service name
+      ansible.builtin.set_fact:
+        chrony_service_name: "{{ 'chronyd' if (_is_alpine | bool) else 'chrony' }}"
+
+    - name: Install localhost-only chrony configuration
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../templates/chrony.conf.j2"
+        dest: /etc/chrony/chrony.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart chrony
+
+    - name: Enable and start chrony
+      ansible.builtin.service:
+        name: "{{ chrony_service_name }}"
+        enabled: true
+        state: started
+
+    - name: Show chrony deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "chrony deployed on {{ inventory_hostname }}"
+
+  handlers:
+    - name: Restart chrony (OpenRC)
+      listen: Restart chrony
+      ansible.builtin.command: "rc-service {{ chrony_service_name }} restart"
+      when: _init == 'openrc'
+
+    - name: Restart chrony (systemd)
+      listen: Restart chrony
+      ansible.builtin.service:
+        name: "{{ chrony_service_name }}"
+        state: restarted
+      when: _init == 'systemd'
+
+- name: Set chrony time from the Ansible control node
+  hosts: chrony_nodes
+  become: false
+  gather_facts: false
+  ignore_unreachable: true
+  any_errors_fatal: false
+  tags: [chrony_set_time]
+
+  tasks:
+    - name: Capture current UTC time from the control node
+      ansible.builtin.set_fact:
+        _chrony_manual_time: "{{ lookup('ansible.builtin.pipe', \"date -u '+%Y-%m-%d %H:%M:%S'\") }}"
+
+    - name: Set chrony time from the control node
+      ansible.builtin.command:
+        argv:
+          - chronyc
+          - -a
+          - "settime {{ _chrony_manual_time }}"
+      register: _chrony_settime
+      changed_when: true
+
+    - name: Apply the manual time immediately
+      ansible.builtin.command:
+        argv:
+          - chronyc
+          - makestep
+      changed_when: true
+
+    - name: Read chrony tracking state
+      ansible.builtin.command:
+        argv:
+          - chronyc
+          - tracking
+      register: _chrony_tracking
+      changed_when: false
+
+    - name: Show manual time synchronization summary
+      ansible.builtin.debug:
+        msg:
+          - "chrony time set on {{ inventory_hostname }}"
+          - "control UTC applied: {{ _chrony_manual_time }}"
+          - "{{ _chrony_tracking.stdout | default('') | trim }}"
