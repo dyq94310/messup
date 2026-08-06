@@ -10,6 +10,49 @@
   tags: [singbox, proxy]
 
   pre_tasks:
+    - name: Resolve sing-box defaults path
+      set_fact:
+        _singbox_defaults_src: "{{ private_config_temp }}/singbox/vars.yml"
+
+    - name: Check sing-box defaults exist on control node
+      stat:
+        path: "{{ _singbox_defaults_src }}"
+      delegate_to: localhost
+      become: false
+      register: _singbox_defaults_stat
+
+    - name: Fail if sing-box defaults are missing
+      assert:
+        that:
+          - _singbox_defaults_stat.stat.exists
+          - _singbox_defaults_stat.stat.isreg
+        fail_msg: "❌ 找不到 sing-box 默认变量: {{ _singbox_defaults_src }}"
+
+    - name: Load sing-box defaults
+      include_vars:
+        file: "{{ _singbox_defaults_src }}"
+        name: _singbox_defaults
+      delegate_to: localhost
+      become: false
+
+    - name: Apply sing-box defaults
+      set_fact:
+        "{{ item }}": "{{ _singbox_defaults[item] }}"
+      loop:
+        - singbox_port_profile
+        - singbox_version
+        - singbox_install_dir
+        - singbox_bin
+        - singbox_config
+        - singbox_service
+        - singbox_cert_dir
+        - _singbox_cert_cache_dir
+        - _singbox_cert_local_archive
+        - _singbox_cert_remote_archive
+        - singbox_ntp_server
+        - singbox_ntp_port
+      when: vars[item] is not defined
+
     - name: Resolve private config paths
       set_fact:
         _singbox_cfg_src: "{{ private_config_temp }}/singbox/config.json.j2"

@@ -14,6 +14,42 @@
   tags: [nft, nat]
 
   pre_tasks:
+    - name: Resolve nft defaults path
+      set_fact:
+        _nft_defaults_src: "{{ private_config_temp }}/nft/vars.yml"
+
+    - name: Check nft defaults exist on control node
+      stat:
+        path: "{{ _nft_defaults_src }}"
+      delegate_to: localhost
+      become: false
+      register: _nft_defaults_stat
+
+    - name: Fail if nft defaults are missing
+      assert:
+        that:
+          - _nft_defaults_stat.stat.exists
+          - _nft_defaults_stat.stat.isreg
+        fail_msg: "❌ 找不到 nft 默认变量: {{ _nft_defaults_src }}"
+
+    - name: Load nft defaults
+      include_vars:
+        file: "{{ _nft_defaults_src }}"
+        name: _nft_defaults
+      delegate_to: localhost
+      become: false
+
+    - name: Apply nft defaults
+      set_fact:
+        "{{ item }}": "{{ _nft_defaults[item] }}"
+      loop:
+        - nft_install_dir
+        - nft_service
+        - nft_tc_enabled
+        - nft_limit_rate
+        - nft_mark
+      when: vars[item] is not defined
+
     - name: Require deployment_env
       assert:
         that:

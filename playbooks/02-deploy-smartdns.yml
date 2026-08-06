@@ -10,6 +10,42 @@
   tags: [smartdns, dns]
 
   pre_tasks:
+    - name: Resolve SmartDNS defaults path
+      set_fact:
+        _smartdns_defaults_src: "{{ private_config_temp }}/smartdns/vars.yml"
+
+    - name: Check SmartDNS defaults exist on control node
+      stat:
+        path: "{{ _smartdns_defaults_src }}"
+      delegate_to: localhost
+      become: false
+      register: _smartdns_defaults_stat
+
+    - name: Fail if SmartDNS defaults are missing
+      assert:
+        that:
+          - _smartdns_defaults_stat.stat.exists
+          - _smartdns_defaults_stat.stat.isreg
+        fail_msg: "❌ 找不到 SmartDNS 默认变量: {{ _smartdns_defaults_src }}"
+
+    - name: Load SmartDNS defaults
+      include_vars:
+        file: "{{ _smartdns_defaults_src }}"
+        name: _smartdns_defaults
+      delegate_to: localhost
+      become: false
+
+    - name: Apply SmartDNS defaults
+      set_fact:
+        "{{ item }}": "{{ _smartdns_defaults[item] }}"
+      loop:
+        - smartdns_version
+        - smartdns_install_dir
+        - smartdns_bin
+        - smartdns_config
+        - smartdns_service
+      when: vars[item] is not defined
+
     - name: Resolve private config path (shared, not per-env)
       set_fact:
         _smartdns_cfg_src: "{{ private_config_temp }}/smartdns/smartdns.conf"
