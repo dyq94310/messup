@@ -74,6 +74,14 @@
       ansible.builtin.set_fact:
         _chrony_control_time: "{{ lookup('ansible.builtin.pipe', \"date -u '+%Y-%m-%d %H:%M:%S UTC'\") }}"
 
+    - name: Reset previous manual chrony samples
+      ansible.builtin.command:
+        argv:
+          - chronyc
+          - manual
+          - reset
+      changed_when: true
+
     - name: Set chrony NTP time from the Ansible control node
       ansible.builtin.command:
         argv:
