@@ -61,11 +61,26 @@
         - chrony_clock_control_disabled | default(false) | bool
       notify: Restart chrony
 
-    - name: Enable and start chrony
+    - name: Enable chrony (OpenRC default runlevel)
+      ansible.builtin.command: "rc-update add {{ chrony_service_name }} default"
+      register: _chrony_openrc_enable
+      changed_when: "'already installed' not in (_chrony_openrc_enable.stdout | default(''))"
+      when: _init == 'openrc'
+
+    - name: Start chrony (OpenRC)
+      ansible.builtin.command: "rc-service {{ chrony_service_name }} start"
+      register: _chrony_openrc_start
+      changed_when: >-
+        'already started' not in (_chrony_openrc_start.stdout | default(''))
+        and 'started' in (_chrony_openrc_start.stdout | default(''))
+      when: _init == 'openrc'
+
+    - name: Enable and start chrony (systemd)
       ansible.builtin.service:
         name: "{{ chrony_service_name }}"
         enabled: true
         state: started
+      when: _init == 'systemd'
 
     - name: Apply changed chrony configuration
       ansible.builtin.meta: flush_handlers

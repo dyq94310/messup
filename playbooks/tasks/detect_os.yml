@@ -21,6 +21,21 @@
     _is_alpine: "{{ (_pkg_mgr_detected.stdout | default('') | trim) == 'alpine' }}"
     _is_debian: "{{ (_pkg_mgr_detected.stdout | default('') | trim) == 'debian' }}"
 
+- name: Detect init system
+  raw: |
+    if command -v rc-service >/dev/null 2>&1; then
+      echo openrc
+    elif command -v systemctl >/dev/null 2>&1; then
+      echo systemd
+    else
+      echo unknown
+    fi
+  args:
+    executable: /bin/sh
+  register: _init_detected
+  changed_when: false
+  failed_when: false
+
 - name: Resolve init system
   set_fact:
-    _init: "{{ 'openrc' if (_is_alpine | bool) else ('systemd' if (_is_debian | bool) else 'unknown') }}"
+    _init: "{{ _init_detected.stdout | default('unknown') | trim }}"
