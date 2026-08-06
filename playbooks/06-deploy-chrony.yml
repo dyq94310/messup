@@ -72,7 +72,7 @@
 
     - name: Capture current UTC time from the Ansible control node
       ansible.builtin.set_fact:
-        _chrony_control_time: "{{ lookup('ansible.builtin.pipe', \"date -u '+%Y-%m-%d %H:%M:%S'\") }}"
+        _chrony_control_time: "{{ lookup('ansible.builtin.pipe', \"date -u '+%Y-%m-%d %H:%M:%S UTC'\") }}"
 
     - name: Set chrony NTP time from the Ansible control node
       ansible.builtin.command:
