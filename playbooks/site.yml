@@ -8,7 +8,6 @@
 #   ansible-playbook playbooks/site.yml --tags nft
 #   ansible-playbook playbooks/site.yml --tags singbox,smartdns,nft
 #   ansible-playbook playbooks/site.yml --tags chrony --limit <节点名>
-#   ansible-playbook playbooks/site.yml --tags chrony_set_time --limit <节点名>
 # 新机可在 inventory 写 bootstrap_password；密钥优先，失败再用密码装公钥。
 
 - name: Import SSH bootstrap (key or bootstrap_password)

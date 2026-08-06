@@ -49,6 +49,18 @@
         mode: "0644"
       notify: Restart chrony
 
+    - name: Disable system clock control on Alpine
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../templates/chronyd.confd.j2"
+        dest: /etc/conf.d/chronyd
+        owner: root
+        group: root
+        mode: "0644"
+      when:
+        - _is_alpine | bool
+        - chrony_clock_control_disabled | default(false) | bool
+      notify: Restart chrony
+
     - name: Enable and start chrony
       ansible.builtin.service:
         name: "{{ chrony_service_name }}"
@@ -72,47 +84,3 @@
         name: "{{ chrony_service_name }}"
         state: restarted
       when: _init == 'systemd'
-
-- name: Set chrony time from the Ansible control node
-  hosts: chrony_nodes
-  become: false
-  gather_facts: false
-  ignore_unreachable: true
-  any_errors_fatal: false
-  tags: [chrony_set_time]
-
-  tasks:
-    - name: Capture current UTC time from the control node
-      ansible.builtin.set_fact:
-        _chrony_manual_time: "{{ lookup('ansible.builtin.pipe', \"date -u '+%Y-%m-%d %H:%M:%S'\") }}"
-
-    - name: Set chrony time from the control node
-      ansible.builtin.command:
-        argv:
-          - chronyc
-          - -a
-          - "settime {{ _chrony_manual_time }}"
-      register: _chrony_settime
-      changed_when: true
-
-    - name: Apply the manual time immediately
-      ansible.builtin.command:
-        argv:
-          - chronyc
-          - makestep
-      changed_when: true
-
-    - name: Read chrony tracking state
-      ansible.builtin.command:
-        argv:
-          - chronyc
-          - tracking
-      register: _chrony_tracking
-      changed_when: false
-
-    - name: Show manual time synchronization summary
-      ansible.builtin.debug:
-        msg:
-          - "chrony time set on {{ inventory_hostname }}"
-          - "control UTC applied: {{ _chrony_manual_time }}"
-          - "{{ _chrony_tracking.stdout | default('') | trim }}"
