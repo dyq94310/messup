@@ -67,10 +67,35 @@
         enabled: true
         state: started
 
+    - name: Apply changed chrony configuration
+      ansible.builtin.meta: flush_handlers
+
+    - name: Capture current UTC time from the Ansible control node
+      ansible.builtin.set_fact:
+        _chrony_control_time: "{{ lookup('ansible.builtin.pipe', \"date -u '+%Y-%m-%d %H:%M:%S'\") }}"
+
+    - name: Set chrony NTP time from the Ansible control node
+      ansible.builtin.command:
+        argv:
+          - chronyc
+          - "settime {{ _chrony_control_time }}"
+      register: _chrony_settime
+      changed_when: true
+
+    - name: Read chrony tracking state
+      ansible.builtin.command:
+        argv:
+          - chronyc
+          - tracking
+      register: _chrony_tracking
+      changed_when: false
+
     - name: Show chrony deployment summary
       ansible.builtin.debug:
         msg:
           - "chrony deployed on {{ inventory_hostname }}"
+          - "control UTC applied: {{ _chrony_control_time }}"
+          - "{{ _chrony_tracking.stdout | default('') | trim }}"
 
   handlers:
     - name: Restart chrony (OpenRC)
