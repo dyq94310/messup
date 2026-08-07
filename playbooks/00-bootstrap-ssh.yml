@@ -3,7 +3,7 @@
 # 密码引导依赖控制机预装的 sshpass（GitHub-hosted runner 已提供）。
 #
 # inventory 示例:
-#   10.0.0.30 ansible_port=22 deployment_env=node-b bootstrap_password=面板初始密码
+#   hosts.ini 放连接信息；首次密码只作为临时 bootstrap 参数
 # 成功后请从 inventory 删除 bootstrap_password=...
 #
 # 注意:

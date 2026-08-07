@@ -66,7 +66,7 @@
           ❌ 找不到 SmartDNS 全局配置: {{ _smartdns_cfg_src }}
           请确认:
             1) messup-private 已 checkout / 软链到 private-config
-            2) 存在 smartdns/smartdns.conf（所有节点共用，不按 deployment_env 分）
+            2) 存在 smartdns/smartdns.conf（所有节点共用，不按环境分）
 
   tasks:
     - name: Detect OS / init

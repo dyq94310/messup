@@ -4,7 +4,7 @@
 
 - **Alpine**：OpenRC；sing-box 使用 **musl** 二进制  
 - **Debian/Ubuntu**：systemd；sing-box 使用 **glibc** 二进制  
-- 私有配置仍按 `deployment_env` 映射，**不按 OS 拆分**
+- nft 私有映射按 `nft_deployment_env` 选择环境，**不按 OS 拆分**
 
 敏感配置（inventory、`config.json`、`smartdns.conf`、`nft/mappings.txt`）存放在私有仓库 **messup-private**，由 CI / 本地流程注入。
 
@@ -40,7 +40,7 @@
 | inventory | 私有配置 |
 |-----------|----------|
 | （任意） | `singbox/config.json.j2` + `singbox/port_profiles.json` |
-| `deployment_env=rear\|pre\|ix` | 对应 `nft/<env>/mappings.txt` |
+| `nft_deployment_env=rear\|pre\|ix` | 对应 `nft/<env>/mappings.txt` |
 | SmartDNS（全局） | 所有节点共用 `smartdns/smartdns.conf`，不分 env |
 
 - 架构自动识别：`x86_64→amd64` / `aarch64→arm64`（sing-box）；SmartDNS 使用 `x86_64` / `aarch64` 官方包名
@@ -134,7 +134,7 @@ ssh-keygen -t ed25519 -C "id_ed25519_github" -f ~/.ssh/id_ed25519_github -N ""
 **推荐（新机）**：在 **messup-private** `inventory.ini` 写临时密码，由 Ansible 自动装钥：
 
 ```ini
-10.0.0.30 ansible_port=22 deployment_env=node-b bootstrap_password=面板初始密码
+hosts.ini 放连接信息；nft.ini 放 `nft_nodes` 与 `nft_deployment_env`
 ```
 
 push 后 CI / 本地 `deploy.sh` 会：先试密钥 → 失败则用密码装公钥 → 关 sshd 密码登录 → 密钥复核 → 业务部署。  
@@ -232,7 +232,7 @@ cd ../messup
 # 均在 messup-private
 cd messup-private
 vim inventory/group_vars/all.yml   # singbox_version / smartdns_version
-vim inventory/inventory.ini        # 节点别名 / ansible_host / 端口 / deployment_env
+vim inventory/hosts.ini            # 节点别名 / ansible_host / 端口
 git add -A && git commit -m "bump sing-box / update inventory" && git push
 # → repository_dispatch → messup Ansible Deploy
 ```
@@ -245,8 +245,8 @@ git add -A && git commit -m "bump sing-box / update inventory" && git push
 mkdir -p nft/node-b
 # singbox/config.json.j2 全部节点共用；在 port_profiles.json 增加 node-b 的端口 profile
 # smartdns 全局共用 smartdns/smartdns.conf，无需按节点复制
-# inventory/inventory.ini 增加一行（新机带临时密码即可自动装钥）:
-# 10.0.0.30 ansible_port=22 deployment_env=node-b singbox_port_profile=node-b bootstrap_password=面板初始密码
+# inventory/hosts.ini 增加一行（新机带临时密码即可自动装钥）:
+# inventory/hosts.ini：加入基础连接信息；inventory/singbox.ini：加入 singbox_nodes 和端口 profile
 # 确保已有且仅有一台节点标记 singbox_cert_source=true，供新节点同步 /etc/cert
 git add -A && git commit -m "add node-b" && git push
 # CI: 00-bootstrap-ssh → 连通性 → site（密钥优先，密码仅作首次回退）
@@ -271,12 +271,13 @@ git add -A && git commit -m "add node-b" && git push
 
 | 变更路径 | 部署范围 |
 |----------|----------|
-| `messup-private/singbox/<env>/**` | `singbox_nodes ∩ deployment_env=<env>` |
+| `messup-private/singbox/**` | `singbox` + 全部 `singbox_nodes` |
 | `messup-private/singbox/` 根目录共享文件 | 全部 `singbox_nodes` |
 | `messup-private/smartdns/**` | 全部 `smartdns_nodes` |
-| `messup-private/nft/<env>/**` | `nft_nodes ∩ deployment_env=<env>` |
+| `messup-private/nft/<env>/**` | `nft_nodes ∩ nft_deployment_env=<env>` |
 | `messup-private/nft/` 根目录共享文件 | 全部 `nft_nodes` |
-| `messup-private/inventory/inventory.ini` / `group_vars/all.yml` / `.deployignore` | 全量，等待 `production` 审批 |
+| `messup-private/inventory/hosts.ini` / `group_vars/all.yml` / `.deployignore` | 全量，等待 `production` 审批 |
+| `messup-private/inventory/<service>.ini` | 比较该服务成员，新增/移除节点仅执行该服务；移除成员需审批 |
 | `messup-private/inventory/host_vars/<节点>.yml` | 根据 `<service>_` 前缀部署该节点对应服务 |
 | 删除 host_vars、未知路径 | 全量，等待 `production` 审批 |
 | 仅文档 / `tests/**` / `Makefile` / `ssh/public_keys/**` 等忽略项 | 不 dispatch |
@@ -369,11 +370,12 @@ nft list table ip forward
 
 ### sing-box 证书同步
 
-默认维护一个证书目录 `singbox_cert_dir=/etc/cert`。多节点部署时，必须在 `inventory.ini` 的 `singbox_nodes` 中标记且只标记一台证书源节点：
+默认维护一个证书目录 `singbox_cert_dir=/etc/cert`。多节点部署时，必须在
+`inventory/singbox.ini` 的 `singbox_nodes` 中标记且只标记一台证书源节点：
 
 ```ini
-172.245.220.230 ansible_port=29586 deployment_env=rear singbox_cert_source=true
-43.248.9.138 ansible_port=11780 deployment_env=ix
+node-a singbox_name=node-a singbox_cert_source=true
+node-b singbox_name=node-b
 ```
 
 部署 sing-box 时，每台目标机会先检查本机 `/etc/cert` 是否同时包含证书文件与私钥文件；本机已有则不动，本机缺失时由 Ansible 控制机从源节点打包并镜像恢复整个目录。源节点目录不存在或没有有效证书/私钥时，playbook 会直接失败，避免新节点启动 sing-box 后反复触发 ACME 申请。
@@ -384,7 +386,7 @@ nft list table ip forward
 
 | 现象 | 处理 |
 |------|------|
-| `找不到节点配置` | `deployment_env` 与 private 目录名；CI `private-config` checkout |
+| `找不到节点配置` | 检查对应服务文件和 private `inventory/` 目录；CI `private-config` checkout |
 | SSH permission denied | `ANSIBLE_SSH_KEY`(=id_ed25519_github) 与 `authorized_keys`；端口；新机可设 `bootstrap_password` |
 | bootstrap 密码登录失败 | 控制机安装 `sshpass`；密码/端口正确；inventory 未把密码写进 `ansible_password` 长期字段 |
 | private checkout 失败 | 同一公钥是否已加到 **messup-private** Deploy keys；Secret 是否私钥全文 |

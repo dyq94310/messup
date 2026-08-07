@@ -4,7 +4,7 @@
 # Soft-fail（本机跳过 nft，不拖死其它主机）：缺 private 文件、不支持 OS、装包失败、
 #   nft preflight 无 CAP_NET_ADMIN、无默认网卡且未设 nft_in_if。
 # Hard-fail（该 host 任务失败，PLAYBOOK_RC 非 0）：preflight 已通过后的目录/下发/unit/apply/校验。
-# mappings: private-config/nft/<deployment_env>/mappings.txt
+# mappings: private-config/nft/<nft_deployment_env>/mappings.txt
 - name: Deploy nft port-forward on nft nodes
   hosts: nft_nodes
   become: false
@@ -50,19 +50,19 @@
         - nft_mark
       when: vars[item] is not defined
 
-    - name: Require deployment_env
+    - name: Require nft_deployment_env
       assert:
         that:
-          - deployment_env is defined
-          - deployment_env | length > 0
+          - nft_deployment_env is defined
+          - nft_deployment_env | length > 0
         fail_msg: >-
-          ❌ Host {{ inventory_hostname }} 缺少 deployment_env。
-          请在 inventory 中设置，例如: deployment_env=rear
-        success_msg: "deployment_env={{ deployment_env }}"
+          ❌ Host {{ inventory_hostname }} 缺少 nft_deployment_env。
+          请在 inventory/nft.ini 中设置，例如: nft_deployment_env=rear
+        success_msg: "nft_deployment_env={{ nft_deployment_env }}"
 
     - name: Resolve private nft paths
       set_fact:
-        _nft_map_src: "{{ private_config_temp }}/nft/{{ deployment_env }}/mappings.txt"
+        _nft_map_src: "{{ private_config_temp }}/nft/{{ nft_deployment_env }}/mappings.txt"
         _nft_apply_src: "{{ private_config_temp }}/nft/apply.sh"
         _nft_ok: true
         _nft_skip_reason: ""
@@ -221,7 +221,7 @@
     - name: Show nft deploy target
       debug:
         msg: >-
-          host={{ inventory_hostname }} env={{ deployment_env }}
+          host={{ inventory_hostname }} env={{ nft_deployment_env }}
           init={{ _init }} in={{ _nft_in_if }} out={{ _nft_out_if }}
           tc={{ nft_tc_enabled | bool }} rate={{ nft_limit_rate }}
           apply={{ nft_install_dir }}/apply.sh
@@ -341,7 +341,7 @@
         msg:
           - "✅ nft port-forward applied (oneshot, reboot-safe)"
           - "  host:     {{ inventory_hostname }}"
-          - "  env:      {{ deployment_env }}"
+          - "  env:      {{ nft_deployment_env }}"
           - "  os/init:  {{ ansible_facts['os_family'] | default('?') }} / {{ _init }}"
           - "  in_if:    {{ _nft_in_if | default('n/a') }}"
           - "  out_if:   {{ _nft_out_if | default('n/a') }}"
@@ -357,6 +357,6 @@
         msg:
           - "⚠️  nft port-forward soft-skipped (no capability or missing config; other hosts continue)"
           - "  host:     {{ inventory_hostname }}"
-          - "  env:      {{ deployment_env | default('n/a') }}"
+          - "  env:      {{ nft_deployment_env | default('n/a') }}"
           - "  reason:   {{ _nft_skip_reason | default('unknown') }}"
       when: not (_nft_ok | bool)

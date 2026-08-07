@@ -7,7 +7,7 @@
 # Row "结果" reflects SSH precheck + overall playbook exit code only.
 set -euo pipefail
 
-INVENTORY="${INVENTORY:-private-config/inventory/inventory.ini}"
+INVENTORY="${INVENTORY:-private-config/inventory/}"
 TAGS="${TAGS:-}"
 LIMIT="${LIMIT:-}"
 REACHABLE="${REACHABLE:-}"
@@ -34,23 +34,17 @@ contains_word() {
   return 1
 }
 
+inventory_json=$(ansible-inventory -i "$INVENTORY" --list)
+
 csv_from_section() {
   local section="$1"
-  awk -v wanted="$section" '
-    $0 == "[" wanted "]" { active=1; next }
-    /^\[/ { active=0 }
-    active && NF && $1 !~ /^#/ { print $1 }
-  ' "$INVENTORY"
+  jq -r --arg section "$section" '.[$section].hosts[]? // empty' <<< "$inventory_json"
 }
 
 # Inventory hostnames are the values Ansible prints in normal task output.
-# Ignore comments and group vars so summaries remain alias-based for both the
-# old IP inventory and the current alias + ansible_host format.
-managed_hosts=$(awk '
-  /^\[(lxc_nodes|kvm_nodes)\]$/ { active=1; next }
-  /^\[/ { active=0 }
-  active && NF && $1 !~ /^#/ { print $1 }
-' "$INVENTORY" | sort -u)
+# Read the merged inventory so directory-based inventories and group children
+# have the same behavior as the playbooks.
+managed_hosts=$(jq -r '([.all_nodes.hosts[]?, .lxc_nodes.hosts[]?, .kvm_nodes.hosts[]?] | unique)[]' <<< "$inventory_json")
 
 if [ -z "$managed_hosts" ]; then
   echo "No managed hosts found in $INVENTORY" >&2

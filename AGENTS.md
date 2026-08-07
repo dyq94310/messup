@@ -16,7 +16,7 @@
 | `templates/` | OpenRC / systemd / 服务模板 |
 | `scripts/` | 本地部署、连通性、变更分类、摘要 |
 | `.github/workflows/` | `ci.yml` 静态校验；`ansible-deploy.yml` 生产部署；`bark-notify.yml` 通知；`clean-history.yml` 非部署 |
-| `ansible.cfg` | inventory → `private-config/inventory/` |
+| `ansible.cfg` | inventory 目录 → `private-config/inventory/` |
 | `private-config/` | 注入目录，禁止提交真实内容 |
 
 改前读目标文件及调用方；复用现有变量、tags、handler、脚本。
@@ -52,7 +52,7 @@
 - 幂等：配置未变不强制重启；版本变才重下二进制
 - 自动部署跟 Git 变更，不修远程手工漂移；漂移用 `workflow_dispatch`
 - 用现有 tags 与 `--limit`；新机：SSH bootstrap → 连通性 → Python → 服务
-- 自动 `deploy_plan`：SSH → 连通性 → **一次** `00-bootstrap-python` → `services.yml`；全量/`site.yml` 仍自带 Python bootstrap。Realm/sing-box playbook 对仍在 `all_nodes` 但已移出服务组的节点执行 stop、disable 和 unit 删除，保留二进制及配置
+- 自动 `deploy_plan`：SSH → 连通性 → **一次** `00-bootstrap-python` → `services.yml`；全量/`site.yml` 仍自带 Python bootstrap。Realm/sing-box playbook 对仍在 `all_nodes` 但已移出服务组的节点执行 stop、disable 和 unit 删除，保留二进制及配置。服务 inventory 成员变化只传入对应服务和变更节点
 - 仅一台 `singbox_cert_source=true`；禁止多源
 - nft：无 CAP/缺配置 soft-skip；preflight 通过后 apply 失败 hard-fail（见 `03-deploy-nft.yml`）
 - 密码/Token/私钥不进 playbook、模板、样例、日志

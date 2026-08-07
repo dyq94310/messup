@@ -510,7 +510,6 @@
         msg:
           - "✅ sing-box deployed"
           - "  host:     {{ inventory_hostname }}"
-          - "  env:      {{ deployment_env }}"
           - "  os/init:  {{ ansible_facts['os_family'] | default('?') }} / {{ _init }}"
           - "  version:  {{ singbox_version }}"
           - "  arch:     {{ target_arch }} ({{ singbox_libc }})"

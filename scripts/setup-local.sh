@@ -21,8 +21,8 @@ if [ ! -d "$PRIVATE/singbox" ]; then
   exit 1
 fi
 
-if [ ! -f "$PRIVATE/inventory/inventory.ini" ]; then
-  echo "❌ $PRIVATE 下没有 inventory/inventory.ini（主机清单应在私有仓）"
+if [ ! -d "$PRIVATE/inventory" ]; then
+  echo "❌ $PRIVATE 下没有 inventory/（主机清单应在私有仓）"
   exit 1
 fi
 

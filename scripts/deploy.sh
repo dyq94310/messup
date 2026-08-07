@@ -20,8 +20,8 @@ if [ ! -d private-config/singbox ]; then
   exit 1
 fi
 
-if [ ! -f private-config/inventory/inventory.ini ]; then
-  echo "❌ private-config/inventory/inventory.ini 不可用（主机清单在私有仓）"
+if [ ! -d private-config/inventory ]; then
+  echo "❌ private-config/inventory/ 不可用（主机清单在私有仓）"
   exit 1
 fi
 
@@ -32,7 +32,7 @@ export ANSIBLE_SSH_ARGS="${ANSIBLE_SSH_ARGS:--o ControlMaster=no -o ControlPath=
 # 1) 先 SSH bootstrap：密钥优先；失败且 inventory 有 bootstrap_password 则密码装钥
 #    必须在连通性预检之前，否则新机会被误判不可达而跳过
 NEED_PW=0
-if grep -E '[[:space:]]bootstrap_password=' private-config/inventory/inventory.ini \
+if find private-config/inventory -maxdepth 1 -type f -name '*.ini' -exec grep -E '[[:space:]]bootstrap_password=' {} + \
   | grep -vE '^[[:space:]]*#' >/dev/null 2>&1; then
   NEED_PW=1
 fi

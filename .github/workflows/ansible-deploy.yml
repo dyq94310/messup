@@ -216,7 +216,7 @@ jobs:
 
           # 是否有主机声明了 bootstrap_password（需要密码装钥必须成功）
           NEED_PW=0
-          if grep -E '[[:space:]]bootstrap_password=' private-config/inventory/inventory.ini \
+          if find private-config/inventory -maxdepth 1 -type f -name '*.ini' -exec grep -E '[[:space:]]bootstrap_password=' {} + \
             | grep -vE '^[[:space:]]*#' >/dev/null 2>&1; then
             NEED_PW=1
             echo "Detected bootstrap_password in inventory → password install required"
@@ -229,7 +229,7 @@ jobs:
           set +e
           # shellcheck disable=SC2086
           ansible-playbook \
-            -i private-config/inventory/inventory.ini \
+            -i private-config/inventory/ \
             playbooks/00-bootstrap-ssh.yml \
             --private-key ~/.ssh/id_ed25519_github \
             -e "private_config_temp=${GITHUB_WORKSPACE}/private-config" \
@@ -303,7 +303,7 @@ jobs:
             fi
             echo "Running: ansible-playbook ${playbook} ${extra[*]}"
             ansible-playbook \
-              -i private-config/inventory/inventory.ini \
+              -i private-config/inventory/ \
               "$playbook" \
               --private-key ~/.ssh/id_ed25519_github \
               -e "private_config_temp=${GITHUB_WORKSPACE}/private-config" \
