@@ -1,5 +1,6 @@
 ---
-# 一键全量部署：SSH bootstrap → Python → system timezone → SmartDNS → Sing-box → chrony → nft → probe
+# 一键全量部署/收敛：SSH bootstrap → Python → system timezone → SmartDNS → Sing-box → chrony → nft → probe
+# Realm 和 sing-box 在不属于对应服务组的 all_nodes 上会停用并移除 service unit。
 # 用法:
 #   ansible-playbook playbooks/site.yml
 #   ansible-playbook playbooks/site.yml --limit <节点名>

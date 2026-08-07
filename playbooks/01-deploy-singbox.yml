@@ -1,6 +1,41 @@
 ---
 # 部署 / 更新 Sing-box（二进制 + OpenRC/systemd + 按节点私有配置）
 # 支持 Alpine (OpenRC/musl) 与 Debian/Ubuntu (systemd/glibc)
+- name: Deactivate Sing-box on nodes outside singbox_nodes
+  hosts: all_nodes:!singbox_nodes
+  become: false
+  gather_facts: true
+  ignore_unreachable: true
+  any_errors_fatal: false
+  tags: [singbox, proxy, deactivate]
+
+  pre_tasks:
+    - name: Load sing-box defaults for deactivation
+      include_vars:
+        file: "{{ private_config_temp }}/singbox/vars.yml"
+        name: _singbox_defaults
+      delegate_to: localhost
+      become: false
+
+    - name: Apply sing-box service default for deactivation
+      set_fact:
+        singbox_service: "{{ _singbox_defaults.singbox_service }}"
+
+  tasks:
+    - name: Detect OS / init
+      ansible.builtin.include_tasks: tasks/detect_os.yml
+
+    - name: Warn when Sing-box deactivation cannot detect init
+      debug:
+        msg: "⚠️ {{ inventory_hostname }} 无法识别 init，跳过 Sing-box 停用。"
+      when: _init == 'unknown'
+
+    - name: Deactivate Sing-box service
+      ansible.builtin.include_tasks: tasks/deactivate_service_unit.yml
+      vars:
+        messup_service_name: "{{ singbox_service }}"
+      when: _init in ['openrc', 'systemd']
+
 - name: Deploy sing-box on singbox nodes
   hosts: singbox_nodes
   become: false

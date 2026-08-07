@@ -52,7 +52,7 @@
 - 幂等：配置未变不强制重启；版本变才重下二进制
 - 自动部署跟 Git 变更，不修远程手工漂移；漂移用 `workflow_dispatch`
 - 用现有 tags 与 `--limit`；新机：SSH bootstrap → 连通性 → Python → 服务
-- 自动 `deploy_plan`：SSH → 连通性 → **一次** `00-bootstrap-python` → `services.yml`；全量/`site.yml` 仍自带 Python bootstrap
+- 自动 `deploy_plan`：SSH → 连通性 → **一次** `00-bootstrap-python` → `services.yml`；全量/`site.yml` 仍自带 Python bootstrap。Realm/sing-box playbook 对仍在 `all_nodes` 但已移出服务组的节点执行 stop、disable 和 unit 删除，保留二进制及配置
 - 仅一台 `singbox_cert_source=true`；禁止多源
 - nft：无 CAP/缺配置 soft-skip；preflight 通过后 apply 失败 hard-fail（见 `03-deploy-nft.yml`）
 - 密码/Token/私钥不进 playbook、模板、样例、日志

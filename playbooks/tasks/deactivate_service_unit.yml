@@ -1,0 +1,47 @@
+---
+# Stop and disable a service managed by messup, while retaining its binary,
+# configuration, certificates, and runtime data for a later redeploy.
+# Required vars:
+#   messup_service_name
+- name: Resolve managed service unit path
+  set_fact:
+    _messup_unit_path: >-
+      {{ '/etc/init.d/' ~ messup_service_name if _init == 'openrc'
+         else '/etc/systemd/system/' ~ messup_service_name ~ '.service' }}
+
+- name: Check managed service unit
+  stat:
+    path: "{{ _messup_unit_path }}"
+  register: _messup_unit
+
+- name: Stop OpenRC service
+  command: "rc-service {{ messup_service_name }} stop"
+  register: _messup_openrc_stop
+  changed_when: false
+  failed_when: false
+  when: _init == 'openrc' and _messup_unit.stat.exists
+
+- name: Disable OpenRC service
+  command: "rc-update del {{ messup_service_name }} default"
+  register: _messup_openrc_disable
+  changed_when: false
+  failed_when: false
+  when: _init == 'openrc' and _messup_unit.stat.exists
+
+- name: Stop and disable systemd service
+  service:
+    name: "{{ messup_service_name }}"
+    state: stopped
+    enabled: false
+  when: _init == 'systemd' and _messup_unit.stat.exists
+
+- name: Remove managed service unit
+  file:
+    path: "{{ _messup_unit_path }}"
+    state: absent
+  register: _messup_unit_removed
+
+- name: Reload systemd after removing managed service unit
+  systemd:
+    daemon_reload: true
+  when: _init == 'systemd' and _messup_unit_removed is changed

@@ -2,6 +2,41 @@
 # Deploy optional Realm TCP relay on realm_nodes.
 # Realm resolves remote hostnames in user space, so DDNS changes do not require
 # rebuilding nft DNAT rules.
+- name: Deactivate Realm on nodes outside realm_nodes
+  hosts: all_nodes:!realm_nodes
+  become: false
+  gather_facts: true
+  ignore_unreachable: true
+  any_errors_fatal: false
+  tags: [realm, relay, deactivate]
+
+  pre_tasks:
+    - name: Load Realm defaults for deactivation
+      include_vars:
+        file: "{{ private_config_temp }}/realm/vars.yml"
+        name: _realm_vars
+      delegate_to: localhost
+      become: false
+
+    - name: Apply Realm service default for deactivation
+      set_fact:
+        realm_service: "{{ _realm_vars.realm_service }}"
+
+  tasks:
+    - name: Detect OS / init
+      ansible.builtin.include_tasks: tasks/detect_os.yml
+
+    - name: Warn when Realm deactivation cannot detect init
+      debug:
+        msg: "⚠️ {{ inventory_hostname }} 无法识别 init，跳过 Realm 停用。"
+      when: _init == 'unknown'
+
+    - name: Deactivate Realm service
+      ansible.builtin.include_tasks: tasks/deactivate_service_unit.yml
+      vars:
+        messup_service_name: "{{ realm_service }}"
+      when: _init in ['openrc', 'systemd']
+
 - name: Deploy Realm relay
   hosts: realm_nodes
   become: false

@@ -1,5 +1,7 @@
 ---
 # Service-only entry point for scoped automatic deployments.
+# Realm and sing-box playbooks also deactivate their service on all_nodes hosts
+# outside the corresponding service group when a full inventory change runs.
 # Caller (ansible-deploy.yml) runs SSH bootstrap, connectivity, then
 # 00-bootstrap-python once for planned hosts before importing these plays.
 - name: Import SmartDNS deploy

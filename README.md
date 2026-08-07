@@ -97,9 +97,15 @@ messup-private/                      # 私有仓（本地/CI 注入为 private-c
 └── nft/<env>/mappings.txt           # proto lport dip dport
 ```
 
-Realm 仅部署到私有 inventory 的 `realm_nodes`。`realm/endpoints.yml` 按节点名
+Realm 仅部署到私有 inventory 的 `realm_nodes`。节点从 `realm_nodes` 移除但仍保留在
+`all_nodes` 时，自动部署会停止、禁用并移除 Realm service unit，保留二进制、配置和数据；
+重新加入 `realm_nodes` 后可恢复部署。`realm/endpoints.yml` 按节点名
 管理 relay 规则，`remote` 可以使用 DDNS 域名；配置的 DNS cache 最大 TTL 为
 300 秒，已建立的连接不会迁移，新连接会在缓存过期后重新解析。
+
+Sing-box 同理：从 `singbox_nodes` 移除但仍保留在 `all_nodes` 时，会停止、禁用并移除
+Sing-box service unit，但保留 `/etc/s-box/` 和证书目录；重新加入服务组后会重新下发
+unit 并启动。
 
 ---
 
