@@ -39,7 +39,7 @@
 
 | inventory | 私有配置 |
 |-----------|----------|
-| （任意） | `singbox/config.json.j2` + `singbox/port_profiles.json` |
+| （任意） | `singbox/config.json.j2` + `singbox/port_profiles.yml` |
 | `nft_deployment_env=rear\|pre\|ix` | 对应 `nft/<env>/mappings.txt` |
 | SmartDNS（全局） | 所有节点共用 `smartdns/smartdns.conf`，不分 env |
 
@@ -87,7 +87,7 @@ messup-private/                      # 私有仓（本地/CI 注入为 private-c
 │   ├── inventory.ini
 │   └── group_vars/all.yml           # 版本号 + nft 默认参数
 ├── singbox/config.json.j2               # 统一模板，端口引用 singbox_ports
-├── singbox/port_profiles.json           # 默认及特殊 NAT 端口映射
+├── singbox/port_profiles.yml            # 默认及特殊 NAT 端口映射
 ├── realm/vars.yml                       # Realm 版本 / 路径 / DNS 默认值
 ├── realm/endpoints.yml                  # 按节点管理 Realm relay 规则
 ├── realm/config.json.j2                 # 可选 Realm relay 配置
@@ -243,7 +243,7 @@ git add -A && git commit -m "bump sing-box / update inventory" && git push
 
 ```bash
 mkdir -p nft/node-b
-# singbox/config.json.j2 全部节点共用；在 port_profiles.json 增加 node-b 的端口 profile
+# singbox/config.json.j2 全部节点共用；在 port_profiles.yml 增加 node-b 的端口 profile
 # smartdns 全局共用 smartdns/smartdns.conf，无需按节点复制
 # inventory/hosts.ini 增加一行（新机带临时密码即可自动装钥）:
 # inventory/hosts.ini：加入基础连接信息；inventory/singbox.ini：加入 singbox_nodes 和端口 profile

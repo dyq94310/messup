@@ -92,7 +92,7 @@
       set_fact:
         _singbox_cfg_src: "{{ private_config_temp }}/singbox/config.json.j2"
         _singbox_wireguard_src: "{{ private_config_temp }}/singbox/wireguard.json"
-        _singbox_port_profiles_src: "{{ private_config_temp }}/singbox/port_profiles.json"
+        _singbox_port_profiles_src: "{{ private_config_temp }}/singbox/port_profiles.yml"
 
     - name: Load sing-box port profiles
       include_vars:
