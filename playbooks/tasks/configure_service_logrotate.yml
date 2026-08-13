@@ -1,10 +1,13 @@
 ---
 # Keep file-based service logs bounded without requiring service-specific
 # reopen or reload support.
-- name: Install logrotate
-  ansible.builtin.package:
-    name: logrotate
-    state: present
+- name: Install logrotate with the detected package manager
+  ansible.builtin.include_tasks: install_host_packages.yml
+  vars:
+    messup_apk_packages:
+      - logrotate
+    messup_apt_packages:
+      - logrotate
 
 - name: Install logrotate policy for file-based service logs
   ansible.builtin.template:
