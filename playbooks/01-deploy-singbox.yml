@@ -132,7 +132,7 @@
         fail_msg: >-
           ❌ sing-box port profile={{ _singbox_selected_profile }} 无效：
           必须是非空对象，所有端口必须为 1-65535 的整数。
-        success_msg: "singbox_port_profile={{ _singbox_selected_profile }} ports={{ singbox_ports }}"
+        success_msg: "sing-box ports validation passed"
 
     - name: Ensure private config exists on control node
       stat:
