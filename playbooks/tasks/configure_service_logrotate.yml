@@ -1,0 +1,15 @@
+---
+# Keep file-based service logs bounded without requiring service-specific
+# reopen or reload support.
+- name: Install logrotate
+  ansible.builtin.package:
+    name: logrotate
+    state: present
+
+- name: Install logrotate policy for file-based service logs
+  ansible.builtin.template:
+    src: "{{ playbook_dir }}/../templates/messup-services.logrotate.j2"
+    dest: /etc/logrotate.d/messup-services
+    mode: "0644"
+    owner: root
+    group: root

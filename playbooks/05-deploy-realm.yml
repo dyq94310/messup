@@ -278,6 +278,9 @@
         messup_systemd_src: "{{ playbook_dir }}/../templates/realm.service.j2"
         messup_service_notify: Restart realm
 
+    - name: Configure sing-box and Realm log rotation
+      ansible.builtin.include_tasks: tasks/configure_service_logrotate.yml
+
     - name: Check Realm version
       command: "{{ realm_bin }} --version"
       register: _realm_version_out

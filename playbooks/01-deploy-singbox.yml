@@ -488,6 +488,9 @@
         messup_systemd_src: "{{ playbook_dir }}/../templates/singbox.service.j2"
         messup_service_notify: Restart singbox
 
+    - name: Configure sing-box and Realm log rotation
+      ansible.builtin.include_tasks: tasks/configure_service_logrotate.yml
+
     - name: Cleanup download archive
       file:
         path: "/tmp/sing-box-{{ singbox_version }}-{{ target_arch }}-{{ singbox_libc }}.tar.gz"

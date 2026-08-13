@@ -1,0 +1,11 @@
+# Managed by Ansible - do not edit manually
+/var/log/sing-box.log /var/log/realm.log {
+    weekly
+    maxsize 20M
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}
