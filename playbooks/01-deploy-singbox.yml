@@ -93,7 +93,9 @@
         _singbox_config_dir: "{{ private_config_temp }}/singbox"
         _singbox_cfg_src: "{{ private_config_temp }}/singbox/config.json.j2"
         _singbox_inbounds_manifest_src: "{{ private_config_temp }}/singbox/inbounds.json"
-        _singbox_wireguard_src: "{{ private_config_temp }}/singbox/wireguard.json"
+        _singbox_wireguard_src: "{{ private_config_temp }}/singbox/wireguard/config.json"
+        _singbox_wireguard_device_peers_src: "{{ private_config_temp }}/singbox/wireguard/device-peers.json"
+        _singbox_wireguard_template_src: "{{ private_config_temp }}/singbox/wireguard/output.json.j2"
         _singbox_port_profiles_src: "{{ private_config_temp }}/singbox/port_profiles.yml"
 
     - name: Load sing-box port profiles
@@ -229,43 +231,105 @@
             2) 存在 singbox/config.json.j2
             3) CI 是否设置 -e private_config_temp=...
 
-    - name: Check shared sing-box WireGuard variables
+    - name: Check sing-box WireGuard configuration files
       stat:
-        path: "{{ _singbox_wireguard_src }}"
+        path: "{{ item }}"
       delegate_to: localhost
       become: false
-      register: _wireguard_stat
+      register: _singbox_wireguard_stats
+      loop:
+        - "{{ _singbox_wireguard_src }}"
+        - "{{ _singbox_wireguard_device_peers_src }}"
 
-    - name: Require shared sing-box WireGuard variables
+    - name: Require sing-box WireGuard configuration files
       assert:
         that:
-          - _wireguard_stat.stat.exists
-          - _wireguard_stat.stat.isreg
+          - item.stat.exists
+          - item.stat.isreg
         fail_msg: >-
-          ❌ 找不到共享 WireGuard 配置: {{ _singbox_wireguard_src }}
+          ❌ 找不到 WireGuard 配置: {{ item.item }}
+      loop: "{{ _singbox_wireguard_stats.results }}"
+      loop_control:
+        label: "{{ item.item }}"
 
-    - name: Load shared sing-box WireGuard variables
+    - name: Load sing-box WireGuard endpoint variables
       include_vars:
         file: "{{ _singbox_wireguard_src }}"
         name: _singbox_wireguard_vars
 
-    - name: Validate sing-box WireGuard endpoint variables
+    - name: Load sing-box WireGuard device peer variables
+      include_vars:
+        file: "{{ _singbox_wireguard_device_peers_src }}"
+        name: _singbox_wireguard_device_peer_vars
+
+    - name: Validate sing-box WireGuard variables
       assert:
         that:
           - _singbox_wireguard_vars.singbox_wireguard is mapping
           - _singbox_wireguard_vars.singbox_wireguard.endpoints is mapping
-          - _singbox_wireguard_vars.singbox_wireguard.device_peers is mapping
+          - _singbox_wireguard_device_peer_vars.device_peers is mapping
         fail_msg: >-
-          ❌ {{ _singbox_wireguard_src }} 格式无效。
+          ❌ WireGuard 配置格式无效。
 
     - name: Resolve current sing-box WireGuard endpoint
       set_fact:
+        _singbox_wireguard: "{{ _singbox_wireguard_vars.singbox_wireguard }}"
         _singbox_wireguard_endpoint: "{{ _singbox_wireguard_vars.singbox_wireguard.endpoints.get(inventory_hostname, {}) }}"
         _singbox_wireguard_enabled: >-
           {{
             _singbox_wireguard_vars.singbox_wireguard.endpoints
             .get(inventory_hostname, {})
-            .get('enabled', false) | bool
+             .get('enabled', false) | bool
+           }}
+
+    - name: Assemble enabled upstream WireGuard peers
+      set_fact:
+        _singbox_wireguard_peers: >-
+          {{
+            (_singbox_wireguard_peers | default([])) + [
+              item | dict2items | rejectattr('key', 'equalto', 'enabled') | items2dict
+            ]
+          }}
+      loop: >-
+        {{
+          _singbox_wireguard_endpoint.get('upstream_peers', {}).values()
+          | selectattr('enabled', 'equalto', true) | list
+        }}
+      no_log: true
+
+    - name: Assemble enabled device WireGuard peers
+      set_fact:
+        _singbox_wireguard_peers: >-
+          {{
+            (_singbox_wireguard_peers | default([])) + [
+              item | dict2items
+              | rejectattr('key', 'in', ['enabled', 'private_key']) | items2dict
+            ]
+          }}
+      loop: >-
+        {{
+          _singbox_wireguard_device_peer_vars.device_peers.values()
+          | selectattr('enabled', 'equalto', true) | list
+        }}
+      no_log: true
+
+    - name: Render sing-box WireGuard fragment
+      set_fact:
+        _singbox_wireguard_fragment: >-
+          {{ lookup('ansible.builtin.template', _singbox_wireguard_template_src) | from_json }}
+      when: _singbox_wireguard_enabled
+      no_log: true
+
+    - name: Assemble sing-box route rules
+      set_fact:
+        _singbox_wireguard_endpoints: >-
+          {{ _singbox_wireguard_fragment | default({}).get('endpoints', []) }}
+        _singbox_route_rules: >-
+          {{
+            (_singbox_wireguard_fragment | default({}).get('route_rules', [])) + [
+              {'action': 'sniff'},
+              {'protocol': 'dns', 'action': 'hijack-dns'}
+            ]
           }}
 
   tasks:
