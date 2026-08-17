@@ -75,6 +75,7 @@
         "{{ item }}": "{{ _singbox_defaults[item] }}"
       loop:
         - singbox_port_profile
+        - singbox_config_source
         - singbox_version
         - singbox_install_dir
         - singbox_bin
@@ -92,11 +93,24 @@
       set_fact:
         _singbox_config_dir: "{{ private_config_temp }}/singbox"
         _singbox_cfg_src: "{{ private_config_temp }}/singbox/config.json.j2"
+        _singbox_full_config_src: "{{ private_config_temp }}/singbox/full/{{ inventory_hostname }}.json"
         _singbox_inbounds_manifest_src: "{{ private_config_temp }}/singbox/inbounds.json"
         _singbox_wireguard_src: "{{ private_config_temp }}/singbox/wireguard/config.json"
         _singbox_wireguard_device_peers_src: "{{ private_config_temp }}/singbox/wireguard/device-peers.json"
         _singbox_wireguard_template_src: "{{ private_config_temp }}/singbox/wireguard/output.json.j2"
         _singbox_port_profiles_src: "{{ private_config_temp }}/singbox/port_profiles.yml"
+
+    - name: Resolve sing-box configuration source
+      set_fact:
+        _singbox_config_source: "{{ singbox_config_source | default('template') }}"
+
+    - name: Validate sing-box configuration source
+      assert:
+        that:
+          - _singbox_config_source in ['template', 'full']
+        fail_msg: >-
+          ❌ singbox_config_source={{ _singbox_config_source }} 无效，
+          只支持 template 或 full。
 
     - name: Load sing-box port profiles
       include_vars:
@@ -104,10 +118,12 @@
         name: _singbox_port_profile_vars
       delegate_to: localhost
       become: false
+      when: _singbox_config_source == 'template'
 
     - name: Resolve sing-box port profile name
       set_fact:
         _singbox_selected_profile: "{{ singbox_port_profile | default('default') }}"
+      when: _singbox_config_source == 'template'
 
     - name: Require sing-box port profile
       assert:
@@ -116,10 +132,12 @@
         fail_msg: >-
           ❌ 找不到 sing-box 端口 profile={{ _singbox_selected_profile }}。
           可用 profile: {{ _singbox_port_profile_vars.singbox_port_profiles.keys() | list }}
+      when: _singbox_config_source == 'template'
 
     - name: Resolve sing-box ports
       set_fact:
         singbox_ports: "{{ _singbox_port_profile_vars.singbox_port_profiles[_singbox_selected_profile] }}"
+      when: _singbox_config_source == 'template'
 
     - name: Validate sing-box ports
       assert:
@@ -137,6 +155,7 @@
           ❌ sing-box port profile={{ _singbox_selected_profile }} 无效：
           必须是非空对象，所有端口必须为 1-65535 的整数。
         success_msg: "sing-box ports validation passed"
+      when: _singbox_config_source == 'template'
 
     - name: Check sing-box inbound manifest exists on control node
       stat:
@@ -144,6 +163,7 @@
       delegate_to: localhost
       become: false
       register: _singbox_inbounds_manifest_stat
+      when: _singbox_config_source == 'template'
 
     - name: Require sing-box inbound manifest
       assert:
@@ -151,6 +171,7 @@
           - _singbox_inbounds_manifest_stat.stat.exists
           - _singbox_inbounds_manifest_stat.stat.isreg
         fail_msg: "❌ 找不到 sing-box inbound 清单: {{ _singbox_inbounds_manifest_src }}"
+      when: _singbox_config_source == 'template'
 
     - name: Load sing-box inbound manifest
       include_vars:
@@ -158,6 +179,7 @@
         name: _singbox_inbounds_manifest_vars
       delegate_to: localhost
       become: false
+      when: _singbox_config_source == 'template'
 
     - name: Validate sing-box inbound manifest
       assert:
@@ -174,6 +196,7 @@
       loop: "{{ _singbox_inbounds_manifest_vars.inbounds }}"
       loop_control:
         label: "{{ item.file | default('?') }}"
+      when: _singbox_config_source == 'template'
 
     - name: Check sing-box inbound files exist on control node
       stat:
@@ -184,6 +207,7 @@
       loop: "{{ _singbox_inbounds_manifest_vars.inbounds }}"
       loop_control:
         label: "{{ item.file }}"
+      when: _singbox_config_source == 'template'
 
     - name: Require sing-box inbound files
       assert:
@@ -194,6 +218,7 @@
       loop: "{{ _singbox_inbound_file_stats.results }}"
       loop_control:
         label: "{{ item.item.file }}"
+      when: _singbox_config_source == 'template'
 
     - name: Assemble sing-box inbounds for selected port profile
       set_fact:
@@ -211,6 +236,7 @@
       loop_control:
         label: "{{ item.file }}"
       no_log: true
+      when: _singbox_config_source == 'template'
 
     - name: Ensure private config exists on control node
       stat:
@@ -218,6 +244,7 @@
       delegate_to: localhost
       become: false
       register: _cfg_stat
+      when: _singbox_config_source == 'template'
 
     - name: Fail if private config missing
       assert:
@@ -230,6 +257,23 @@
             1) messup-private 已 checkout / 软链到 private-config
             2) 存在 singbox/config.json.j2
             3) CI 是否设置 -e private_config_temp=...
+      when: _singbox_config_source == 'template'
+
+    - name: Check full sing-box config exists on control node
+      stat:
+        path: "{{ _singbox_full_config_src }}"
+      delegate_to: localhost
+      become: false
+      register: _singbox_full_config_stat
+      when: _singbox_config_source == 'full'
+
+    - name: Require full sing-box config
+      assert:
+        that:
+          - _singbox_full_config_stat.stat.exists
+          - _singbox_full_config_stat.stat.isreg
+        fail_msg: "❌ 找不到完整 sing-box 配置: {{ _singbox_full_config_src }}"
+      when: _singbox_config_source == 'full'
 
     - name: Check sing-box WireGuard configuration files
       stat:
@@ -240,6 +284,7 @@
       loop:
         - "{{ _singbox_wireguard_src }}"
         - "{{ _singbox_wireguard_device_peers_src }}"
+      when: _singbox_config_source == 'template'
 
     - name: Require sing-box WireGuard configuration files
       assert:
@@ -251,16 +296,19 @@
       loop: "{{ _singbox_wireguard_stats.results }}"
       loop_control:
         label: "{{ item.item }}"
+      when: _singbox_config_source == 'template'
 
     - name: Load sing-box WireGuard endpoint variables
       include_vars:
         file: "{{ _singbox_wireguard_src }}"
         name: _singbox_wireguard_vars
+      when: _singbox_config_source == 'template'
 
     - name: Load sing-box WireGuard device peer variables
       include_vars:
         file: "{{ _singbox_wireguard_device_peers_src }}"
         name: _singbox_wireguard_device_peer_vars
+      when: _singbox_config_source == 'template'
 
     - name: Validate sing-box WireGuard variables
       assert:
@@ -270,6 +318,7 @@
           - _singbox_wireguard_device_peer_vars.device_peers is mapping
         fail_msg: >-
           ❌ WireGuard 配置格式无效。
+      when: _singbox_config_source == 'template'
 
     - name: Resolve current sing-box WireGuard endpoint
       set_fact:
@@ -281,6 +330,7 @@
             .get(inventory_hostname, {})
              .get('enabled', false) | bool
            }}
+      when: _singbox_config_source == 'template'
 
     - name: Assemble enabled upstream WireGuard peers
       set_fact:
@@ -296,6 +346,7 @@
           | selectattr('enabled', 'equalto', true) | list
         }}
       no_log: true
+      when: _singbox_config_source == 'template'
 
     - name: Assemble enabled device WireGuard peers
       set_fact:
@@ -312,13 +363,16 @@
           | selectattr('enabled', 'equalto', true) | list
         }}
       no_log: true
+      when: _singbox_config_source == 'template'
 
     - name: Render sing-box WireGuard fragment
       set_fact:
         _singbox_wireguard_fragment: >-
           {{ lookup('ansible.builtin.template', _singbox_wireguard_template_src) | from_json }}
-      when: _singbox_wireguard_enabled
       no_log: true
+      when:
+        - _singbox_config_source == 'template'
+        - _singbox_wireguard_enabled
 
     - name: Assemble sing-box route rules
       set_fact:
@@ -331,6 +385,7 @@
               {'protocol': 'dns', 'action': 'hijack-dns'}
             ]
           }}
+      when: _singbox_config_source == 'template'
 
   tasks:
     - name: Detect OS / init
@@ -458,6 +513,19 @@
         owner: root
         group: root
       notify: Restart singbox
+      diff: false
+      when: _singbox_config_source == 'template'
+
+    - name: Copy full node-specific config from private repo
+      copy:
+        src: "{{ _singbox_full_config_src }}"
+        dest: "{{ singbox_config }}"
+        mode: "0600"
+        owner: root
+        group: root
+      notify: Restart singbox
+      diff: false
+      when: _singbox_config_source == 'full'
 
     - name: Collect configured sing-box certificate source hosts
       set_fact:
