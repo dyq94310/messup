@@ -323,10 +323,10 @@
     - name: Assemble sing-box route rules
       set_fact:
         _singbox_wireguard_endpoints: >-
-          {{ _singbox_wireguard_fragment | default({}).get('endpoints', []) }}
+          {{ _singbox_wireguard_fragment.endpoints | default([]) }}
         _singbox_route_rules: >-
           {{
-            (_singbox_wireguard_fragment | default({}).get('route_rules', [])) + [
+            (_singbox_wireguard_fragment.route_rules | default([])) + [
               {'action': 'sniff'},
               {'protocol': 'dns', 'action': 'hijack-dns'}
             ]
