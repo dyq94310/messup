@@ -94,7 +94,6 @@
         _singbox_config_dir: "{{ private_config_temp }}/singbox"
         _singbox_cfg_src: "{{ private_config_temp }}/singbox/config.json.j2"
         _singbox_full_config_src: "{{ private_config_temp }}/singbox/full/{{ inventory_hostname }}.json"
-        _singbox_inbounds_manifest_src: "{{ private_config_temp }}/singbox/inbounds.json"
         _singbox_wireguard_src: "{{ private_config_temp }}/singbox/wireguard/config.json"
         _singbox_wireguard_device_peers_src: "{{ private_config_temp }}/singbox/wireguard/device-peers.json"
         _singbox_wireguard_template_src: "{{ private_config_temp }}/singbox/wireguard/output.json.j2"
@@ -128,15 +127,22 @@
     - name: Require sing-box port profile
       assert:
         that:
-          - _singbox_selected_profile in _singbox_port_profile_vars.singbox_port_profiles
+          - _singbox_selected_profile == 'default' or _singbox_selected_profile in _singbox_port_profile_vars.singbox_port_profiles
+          - _singbox_port_profile_vars.singbox_port_defaults is mapping
         fail_msg: >-
           ❌ 找不到 sing-box 端口 profile={{ _singbox_selected_profile }}。
-          可用 profile: {{ _singbox_port_profile_vars.singbox_port_profiles.keys() | list }}
+          可用 profile: {{ (['default'] + (_singbox_port_profile_vars.singbox_port_profiles.keys() | list)) | unique }}
       when: _singbox_config_source == 'template'
 
     - name: Resolve sing-box ports
       set_fact:
-        singbox_ports: "{{ _singbox_port_profile_vars.singbox_port_profiles[_singbox_selected_profile] }}"
+        singbox_ports: >-
+          {{ _singbox_port_profile_vars.singbox_port_defaults
+             | combine(
+                 _singbox_port_profile_vars.singbox_port_profiles.get(
+                   _singbox_selected_profile, {}
+                 )
+               ) }}
       when: _singbox_config_source == 'template'
 
     - name: Validate sing-box ports
@@ -157,56 +163,45 @@
         success_msg: "sing-box ports validation passed"
       when: _singbox_config_source == 'template'
 
-    - name: Check sing-box inbound manifest exists on control node
-      stat:
-        path: "{{ _singbox_inbounds_manifest_src }}"
-      delegate_to: localhost
-      become: false
-      register: _singbox_inbounds_manifest_stat
+    - name: Load sing-box inbound files
+      set_fact:
+        _singbox_inbound_files: >-
+          {{ lookup(
+               'ansible.builtin.fileglob',
+               _singbox_config_dir ~ '/inbounds/*.json',
+               wantlist=True
+             ) | sort }}
       when: _singbox_config_source == 'template'
 
-    - name: Require sing-box inbound manifest
+    - name: Require sing-box inbound files
       assert:
         that:
-          - _singbox_inbounds_manifest_stat.stat.exists
-          - _singbox_inbounds_manifest_stat.stat.isreg
-        fail_msg: "❌ 找不到 sing-box inbound 清单: {{ _singbox_inbounds_manifest_src }}"
+          - _singbox_inbound_files is sequence
+          - _singbox_inbound_files is not string
+          - _singbox_inbound_files | length > 0
+        fail_msg: "❌ 找不到 sing-box inbound 配置文件: {{ _singbox_config_dir }}/inbounds/*.json"
       when: _singbox_config_source == 'template'
 
-    - name: Load sing-box inbound manifest
-      include_vars:
-        file: "{{ _singbox_inbounds_manifest_src }}"
-        name: _singbox_inbounds_manifest_vars
-      delegate_to: localhost
-      become: false
-      when: _singbox_config_source == 'template'
-
-    - name: Validate sing-box inbound manifest
+    - name: Validate sing-box inbound filenames
       assert:
         that:
-          - _singbox_inbounds_manifest_vars.inbounds is sequence
-          - _singbox_inbounds_manifest_vars.inbounds is not string
-          - _singbox_inbounds_manifest_vars.inbounds | length > 0
-          - item.file is string
-          - item.port_key is string
-          - item.port_key in singbox_ports
+          - (item | basename | regex_replace('\\.json$', '')) in singbox_ports
         fail_msg: >-
-          ❌ {{ _singbox_inbounds_manifest_src }} 格式无效，
-          每个 inbound 必须指定现有 port_key 的 file 和 port_key。
-      loop: "{{ _singbox_inbounds_manifest_vars.inbounds }}"
+          ❌ inbound 文件名必须对应现有 port_key：{{ item | basename }}。
+      loop: "{{ _singbox_inbound_files }}"
       loop_control:
-        label: "{{ item.file | default('?') }}"
+        label: "{{ item | basename }}"
       when: _singbox_config_source == 'template'
 
     - name: Check sing-box inbound files exist on control node
       stat:
-        path: "{{ _singbox_config_dir }}/{{ item.file }}"
+        path: "{{ item }}"
       delegate_to: localhost
       become: false
       register: _singbox_inbound_file_stats
-      loop: "{{ _singbox_inbounds_manifest_vars.inbounds }}"
+      loop: "{{ _singbox_inbound_files }}"
       loop_control:
-        label: "{{ item.file }}"
+        label: "{{ item | basename }}"
       when: _singbox_config_source == 'template'
 
     - name: Require sing-box inbound files
@@ -214,10 +209,10 @@
         that:
           - item.stat.exists
           - item.stat.isreg
-        fail_msg: "❌ 找不到 sing-box inbound 配置: {{ item.item.file }}"
+        fail_msg: "❌ 找不到 sing-box inbound 配置: {{ item.item | basename }}"
       loop: "{{ _singbox_inbound_file_stats.results }}"
       loop_control:
-        label: "{{ item.item.file }}"
+        label: "{{ item.item | basename }}"
       when: _singbox_config_source == 'template'
 
     - name: Assemble sing-box inbounds for selected port profile
@@ -226,15 +221,15 @@
           {{
             (_singbox_inbounds | default([])) + [
               (
-                lookup('ansible.builtin.file', _singbox_config_dir ~ '/' ~ item.file)
+                lookup('ansible.builtin.file', item)
                 | from_json
-                | combine({'listen_port': singbox_ports[item.port_key]})
+                | combine({'listen_port': singbox_ports[item | basename | regex_replace('\\.json$', '')]})
               )
             ]
           }}
-      loop: "{{ _singbox_inbounds_manifest_vars.inbounds }}"
+      loop: "{{ _singbox_inbound_files }}"
       loop_control:
-        label: "{{ item.file }}"
+        label: "{{ item | basename }}"
       no_log: true
       when: _singbox_config_source == 'template'
 
