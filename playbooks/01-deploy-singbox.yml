@@ -185,7 +185,7 @@
     - name: Validate sing-box inbound filenames
       assert:
         that:
-          - (item | basename | regex_replace('\\.json$', '')) in singbox_ports
+          - (item | basename | replace('.json', '')) in singbox_ports
         fail_msg: >-
           ❌ inbound 文件名必须对应现有 port_key：{{ item | basename }}。
       loop: "{{ _singbox_inbound_files }}"
@@ -223,7 +223,7 @@
               (
                 lookup('ansible.builtin.file', item)
                 | from_json
-                | combine({'listen_port': singbox_ports[item | basename | regex_replace('\\.json$', '')]})
+                 | combine({'listen_port': singbox_ports[(item | basename | replace('.json', ''))]})
               )
             ]
           }}
