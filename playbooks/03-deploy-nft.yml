@@ -219,16 +219,6 @@
         group: root
       when: _nft_ok | bool
 
-    - name: Remove leftover apply.sh artifacts
-      file:
-        path: "{{ item }}"
-        state: absent
-      loop:
-        - "{{ nft_install_dir }}/apply.sh"
-        - "{{ nft_install_dir }}/mappings.txt"
-        - "{{ nft_install_dir }}/env"
-      when: _nft_ok | bool
-
     - name: Deploy nft rules
       template:
         src: "{{ playbook_dir }}/../templates/messup-nft.nft.j2"
@@ -236,14 +226,6 @@
         mode: "0644"
         owner: root
         group: root
-      when: _nft_ok | bool
-
-    - name: Remove leftover traffic control qdisc
-      command: tc qdisc del dev {{ item }} root
-      loop: "{{ [_nft_in_if, _nft_out_if] | unique }}"
-      register: _nft_tc_del
-      failed_when: false
-      changed_when: _nft_tc_del.rc | default(1) == 0
       when: _nft_ok | bool
 
     - name: Allow marked forwarded connections
