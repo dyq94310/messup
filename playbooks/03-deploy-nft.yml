@@ -243,7 +243,7 @@
       loop: "{{ [_nft_in_if, _nft_out_if] | unique }}"
       register: _nft_tc_del
       failed_when: false
-      changed_when: rc == 0
+      changed_when: _nft_tc_del.rc | default(1) == 0
       when: _nft_ok | bool
 
     - name: Allow marked forwarded connections
