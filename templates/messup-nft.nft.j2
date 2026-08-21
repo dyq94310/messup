@@ -1,0 +1,18 @@
+# Managed by Ansible — do not edit manually
+table ip forward
+delete table ip forward
+
+table ip forward {
+	chain prerouting {
+		type nat hook prerouting priority -100;
+{% for lport, dest in _nft_host_forwards.items() %}
+		iifname "{{ _nft_in_if }}" tcp dport {{ lport }} ct state new ct mark set {{ nft_mark }} dnat to {{ dest }}
+		iifname "{{ _nft_in_if }}" udp dport {{ lport }} ct state new ct mark set {{ nft_mark }} dnat to {{ dest }}
+{% endfor %}
+	}
+
+	chain postrouting {
+		type nat hook postrouting priority 100;
+		oifname "{{ _nft_out_if }}" ct mark {{ nft_mark }} masquerade
+	}
+}

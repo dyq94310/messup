@@ -55,7 +55,7 @@ else
           need_sb=1 ;;
         playbooks/02-deploy-smartdns.yml|templates/smartdns.openrc.j2|templates/smartdns.service.j2)
           need_sd=1 ;;
-        playbooks/03-deploy-nft.yml|templates/messup-nft.openrc.j2|templates/messup-nft.env.j2|templates/messup-nft.service.j2)
+        playbooks/03-deploy-nft.yml|templates/messup-nft.openrc.j2|templates/messup-nft.nft.j2|templates/messup-nft.service.j2)
           need_nft=1 ;;
         playbooks/04-deploy-probe.yml)
           need_probe=1 ;;

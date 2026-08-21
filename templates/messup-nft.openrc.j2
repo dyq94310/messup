@@ -10,20 +10,12 @@ depend() {
 
 start() {
 	ebegin "Applying messup nft NAT"
-	if [ ! -x "{{ nft_install_dir }}/apply.sh" ]; then
-		eerror "apply.sh not found: {{ nft_install_dir }}/apply.sh"
+	if [ ! -f "{{ nft_install_dir }}/rules.nft" ]; then
+		eerror "rules not found: {{ nft_install_dir }}/rules.nft"
 		eend 1
 		return 1
 	fi
-	if [ ! -f "{{ nft_install_dir }}/mappings.txt" ]; then
-		eerror "mappings not found: {{ nft_install_dir }}/mappings.txt"
-		eend 1
-		return 1
-	fi
-	# shellcheck disable=SC1091
-	[ -f "{{ nft_install_dir }}/env" ] && . "{{ nft_install_dir }}/env"
-	export IN_IF OUT_IF CFG LIMIT_RATE MARK TC_ENABLED
-	"{{ nft_install_dir }}/apply.sh"
+	nft -f "{{ nft_install_dir }}/rules.nft"
 	eend $?
 }
 

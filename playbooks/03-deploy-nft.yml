@@ -1,10 +1,9 @@
 ---
-# 薄封装：下发 private apply.sh + mappings + OpenRC/systemd oneshot（开机自恢复）
-# 支持 Alpine (OpenRC) 与 Debian/Ubuntu (systemd)
-# Soft-fail（本机跳过 nft，不拖死其它主机）：缺 private 文件、不支持 OS、装包失败、
+# 按主机名从 private nft/forwards.yml 取 DNAT，生成 rules.nft 后用 nft -f 下发。
+# OpenRC/systemd oneshot 开机再加载同一份规则。禁止 tc。
+# Soft-fail（本机跳过 nft，不拖死其它主机）：不支持 OS、装包失败、
 #   nft preflight 无 CAP_NET_ADMIN、无默认网卡且未设 nft_in_if。
-# Hard-fail（该 host 任务失败，PLAYBOOK_RC 非 0）：preflight 已通过后的目录/下发/unit/apply/校验。
-# mappings: private-config/nft/<nft_deployment_env>/mappings.txt
+# Hard-fail（该 host 任务失败，PLAYBOOK_RC 非 0）：缺 forwards.yml、主机名未对齐、preflight 后下发/apply/校验失败。
 - name: Deploy nft port-forward on nft nodes
   hosts: nft_nodes
   become: false
@@ -14,94 +13,56 @@
   tags: [nft, nat]
 
   pre_tasks:
-    - name: Resolve nft defaults path
+    - name: Resolve nft forwards path
       set_fact:
-        _nft_defaults_src: "{{ private_config_temp }}/nft/vars.yml"
+        _nft_src: "{{ private_config_temp }}/nft/forwards.yml"
 
-    - name: Check nft defaults exist on control node
+    - name: Check nft forwards exist on control node
       stat:
-        path: "{{ _nft_defaults_src }}"
+        path: "{{ _nft_src }}"
       delegate_to: localhost
       become: false
-      register: _nft_defaults_stat
+      register: _nft_src_stat
 
-    - name: Fail if nft defaults are missing
+    - name: Fail if nft forwards are missing
       assert:
         that:
-          - _nft_defaults_stat.stat.exists
-          - _nft_defaults_stat.stat.isreg
-        fail_msg: "❌ 找不到 nft 默认变量: {{ _nft_defaults_src }}"
+          - _nft_src_stat.stat.exists
+          - _nft_src_stat.stat.isreg
+        fail_msg: "❌ 找不到 nft 转发配置: {{ _nft_src }}"
 
-    - name: Load nft defaults
+    - name: Load nft forwards
       include_vars:
-        file: "{{ _nft_defaults_src }}"
-        name: _nft_defaults
+        file: "{{ _nft_src }}"
+        name: _nft_file
       delegate_to: localhost
       become: false
 
     - name: Apply nft defaults
       set_fact:
-        "{{ item }}": "{{ _nft_defaults[item] }}"
+        "{{ item }}": "{{ _nft_file[item] }}"
       loop:
         - nft_install_dir
         - nft_service
-        - nft_tc_enabled
-        - nft_limit_rate
         - nft_mark
       when: vars[item] is not defined
 
-    - name: Require nft_deployment_env
+    - name: Require hostname-aligned nft forwards
       assert:
         that:
-          - nft_deployment_env is defined
-          - nft_deployment_env | length > 0
+          - _nft_file.nft_forwards is mapping
+          - inventory_hostname in _nft_file.nft_forwards
+          - _nft_file.nft_forwards[inventory_hostname] is mapping
         fail_msg: >-
-          ❌ Host {{ inventory_hostname }} 缺少 nft_deployment_env。
-          请在 inventory/nft.ini 中设置，例如: nft_deployment_env=rear
-        success_msg: "nft_deployment_env={{ nft_deployment_env }}"
+          ❌ Host {{ inventory_hostname }} 必须出现在 nft/forwards.yml 的 nft_forwards 中。
+        success_msg: "nft_forwards host={{ inventory_hostname }}"
 
-    - name: Resolve private nft paths
+    - name: Store host nft forwards
       set_fact:
-        _nft_map_src: "{{ private_config_temp }}/nft/{{ nft_deployment_env }}/mappings.txt"
-        _nft_apply_src: "{{ private_config_temp }}/nft/apply.sh"
+        nft_forwards: "{{ _nft_file.nft_forwards }}"
+        _nft_host_forwards: "{{ _nft_file.nft_forwards[inventory_hostname] }}"
         _nft_ok: true
         _nft_skip_reason: ""
-
-    - name: Ensure apply.sh exists on control node
-      stat:
-        path: "{{ _nft_apply_src }}"
-      delegate_to: localhost
-      become: false
-      register: _nft_apply_stat
-
-    - name: Ensure mappings exists on control node
-      stat:
-        path: "{{ _nft_map_src }}"
-      delegate_to: localhost
-      become: false
-      register: _nft_map_stat
-
-    - name: Warn if private nft files missing (skip host nft, do not fail)
-      debug:
-        msg: >-
-          ⚠️  缺少 private nft 文件，跳过本机 nft：
-          apply.sh={{ _nft_apply_src }} exists={{ _nft_apply_stat.stat.exists | default(false) }}
-          mappings={{ _nft_map_src }} exists={{ _nft_map_stat.stat.exists | default(false) }}
-      when: >-
-        not (_nft_apply_stat.stat.exists | default(false))
-        or not (_nft_map_stat.stat.isreg | default(false))
-        or not (_nft_map_stat.stat.exists | default(false))
-        or not (_nft_apply_stat.stat.isreg | default(false))
-
-    - name: Mark skip when private files missing
-      set_fact:
-        _nft_ok: false
-        _nft_skip_reason: "private nft files missing"
-      when: >-
-        not (_nft_apply_stat.stat.exists | default(false))
-        or not (_nft_apply_stat.stat.isreg | default(false))
-        or not (_nft_map_stat.stat.exists | default(false))
-        or not (_nft_map_stat.stat.isreg | default(false))
 
   tasks:
     - name: Detect OS / init
@@ -221,13 +182,34 @@
     - name: Show nft deploy target
       debug:
         msg: >-
-          host={{ inventory_hostname }} env={{ nft_deployment_env }}
+          host={{ inventory_hostname }}
           init={{ _init }} in={{ _nft_in_if }} out={{ _nft_out_if }}
-          tc={{ nft_tc_enabled | bool }} rate={{ nft_limit_rate }}
-          apply={{ nft_install_dir }}/apply.sh
+          forwards={{ _nft_host_forwards | length }}
+          rules={{ nft_install_dir }}/rules.nft
       when: _nft_ok | bool
 
     # --- Hard path: capability preflight passed; failures fail this host ---
+    - name: Read ip_forward
+      command: sysctl -n net.ipv4.ip_forward
+      register: _nft_fwd
+      changed_when: false
+      failed_when: false
+      when: _nft_ok | bool
+
+    - name: Enable ip_forward
+      command: sysctl -w net.ipv4.ip_forward=1
+      register: _nft_fwd_set
+      failed_when: false
+      when: _nft_ok | bool and (_nft_fwd.stdout | default('0') | trim) != "1"
+
+    - name: Fail if ip_forward cannot be enabled
+      fail:
+        msg: "cannot set net.ipv4.ip_forward=1 (current={{ _nft_fwd.stdout | default('?') | trim }})"
+      when: >-
+        _nft_ok | bool
+        and (_nft_fwd.stdout | default('0') | trim) != "1"
+        and (_nft_fwd_set.rc | default(1)) != 0
+
     - name: Ensure install directory
       file:
         path: "{{ nft_install_dir }}"
@@ -237,32 +219,41 @@
         group: root
       when: _nft_ok | bool
 
-    - name: Deploy apply.sh
-      copy:
-        src: "{{ _nft_apply_src }}"
-        dest: "{{ nft_install_dir }}/apply.sh"
-        mode: "0755"
-        owner: root
-        group: root
+    - name: Remove leftover apply.sh artifacts
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ nft_install_dir }}/apply.sh"
+        - "{{ nft_install_dir }}/mappings.txt"
+        - "{{ nft_install_dir }}/env"
       when: _nft_ok | bool
 
-    - name: Deploy mappings.txt
-      copy:
-        src: "{{ _nft_map_src }}"
-        dest: "{{ nft_install_dir }}/mappings.txt"
-        mode: "0644"
-        owner: root
-        group: root
-      when: _nft_ok | bool
-
-    - name: Deploy env for apply.sh / service
+    - name: Deploy nft rules
       template:
-        src: "{{ playbook_dir }}/../templates/messup-nft.env.j2"
-        dest: "{{ nft_install_dir }}/env"
+        src: "{{ playbook_dir }}/../templates/messup-nft.nft.j2"
+        dest: "{{ nft_install_dir }}/rules.nft"
         mode: "0644"
         owner: root
         group: root
-      register: _nft_env
+      when: _nft_ok | bool
+
+    - name: Remove leftover traffic control qdisc
+      command: tc qdisc del dev {{ item }} root
+      loop: "{{ [_nft_in_if, _nft_out_if] | unique }}"
+      register: _nft_tc_del
+      failed_when: false
+      changed_when: rc == 0
+      when: _nft_ok | bool
+
+    - name: Allow marked forwarded connections
+      shell: |
+        iptables -C FORWARD -m connmark --mark "{{ nft_mark }}" -j ACCEPT 2>/dev/null \
+          || iptables -I FORWARD 1 -m connmark --mark "{{ nft_mark }}" -j ACCEPT
+      args:
+        executable: /bin/sh
+      register: _nft_ipt
+      changed_when: "'ACCEPT' in (_nft_ipt.stderr | default('')) or (_nft_ipt.rc | default(1)) == 0"
       when: _nft_ok | bool
 
     - name: Deploy OpenRC service unit
@@ -305,11 +296,11 @@
         enabled: true
       when: _nft_ok | bool and _init == 'systemd'
 
-    - name: Apply via service (OpenRC restart = re-run oneshot apply.sh)
+    - name: Apply via service (OpenRC restart = nft -f rules.nft)
       command: "rc-service {{ nft_service }} restart"
       when: _nft_ok | bool and _init == 'openrc'
 
-    - name: Apply via service (systemd restart = re-run oneshot apply.sh)
+    - name: Apply via service (systemd restart = nft -f rules.nft)
       service:
         name: "{{ nft_service }}"
         state: restarted
@@ -341,15 +332,14 @@
         msg:
           - "✅ nft port-forward applied (oneshot, reboot-safe)"
           - "  host:     {{ inventory_hostname }}"
-          - "  env:      {{ nft_deployment_env }}"
           - "  os/init:  {{ ansible_facts['os_family'] | default('?') }} / {{ _init }}"
           - "  in_if:    {{ _nft_in_if | default('n/a') }}"
           - "  out_if:   {{ _nft_out_if | default('n/a') }}"
           - "  dir:      {{ nft_install_dir }}"
           - "  service:  {{ nft_service }}"
           - "  status:   {{ _nft_svc_status.stdout | default('n/a') | trim }}"
-          - "  tc:       {{ nft_tc_enabled | bool }} ({{ nft_limit_rate }})"
-          - "  note:     重启后由 {{ _init }} 自动 apply，无需再跑 Ansible"
+          - "  forwards: {{ _nft_host_forwards.keys() | list | sort }}"
+          - "  note:     重启后由 {{ _init }} 自动 nft -f，无需再跑 Ansible"
       when: _nft_ok | bool
 
     - name: Deployment summary (soft-skipped)
@@ -357,6 +347,5 @@
         msg:
           - "⚠️  nft port-forward soft-skipped (no capability or missing config; other hosts continue)"
           - "  host:     {{ inventory_hostname }}"
-          - "  env:      {{ nft_deployment_env | default('n/a') }}"
           - "  reason:   {{ _nft_skip_reason | default('unknown') }}"
       when: not (_nft_ok | bool)

@@ -4,9 +4,9 @@
 
 - **Alpine**：OpenRC；sing-box 使用 **musl** 二进制  
 - **Debian/Ubuntu**：systemd；sing-box 使用 **glibc** 二进制  
-- nft 私有映射按 `nft_deployment_env` 选择环境，**不按 OS 拆分**
+- nft 私有映射按 inventory 主机名写在 `nft/forwards.yml`，**不按 OS 或环境 tag 拆分**
 
-敏感配置（inventory、`config.json`、`smartdns.conf`、`nft/mappings.txt`）存放在私有仓库 **messup-private**，由 CI / 本地流程注入。
+敏感配置（inventory、`config.json`、`smartdns.conf`、`nft/forwards.yml`）存放在私有仓库 **messup-private**，由 CI / 本地流程注入。
 
 | 仓库 | 可见性 | 内容 |
 |------|--------|------|
@@ -31,7 +31,7 @@
 │  inventory/     │               └──────────────────────┘
 │  singbox/       │
 │  smartdns/      │
-│  nft/<env>/     │
+│  nft/forwards.yml│
 └─────────────────┘
 ```
 
@@ -40,7 +40,7 @@
 | inventory | 私有配置 |
 |-----------|----------|
 | （任意） | `singbox/config.json.j2` + `singbox/port_profiles.yml` |
-| `nft_deployment_env=rear\|pre\|ix` | 对应 `nft/<env>/mappings.txt` |
+| `nft_nodes` 主机名 | `nft/forwards.yml` 中同名键 |
 | SmartDNS（全局） | 所有节点共用 `smartdns/smartdns.conf`，不分 env |
 
 - 架构自动识别：`x86_64→amd64` / `aarch64→arm64`（sing-box）；SmartDNS 使用 `x86_64` / `aarch64` 官方包名
@@ -74,7 +74,7 @@ messup/                              # 公开仓（无主机清单）
 │   ├── singbox.openrc.j2 / singbox.service.j2
 │   ├── smartdns.openrc.j2 / smartdns.service.j2
 │   ├── messup-nft.openrc.j2 / messup-nft.service.j2
-│   └── messup-nft.env.j2
+│   └── messup-nft.nft.j2
 ├── scripts/
 │   ├── setup-local.sh               # 软链 private-config
 │   └── deploy.sh                    # 本地一键部署
@@ -93,8 +93,7 @@ messup-private/                      # 私有仓（本地/CI 注入为 private-c
 ├── realm/config.json.j2                 # 可选 Realm relay 配置
 ├── ssh/public_keys/*.pub             # 额外个人电脑 SSH 公钥，下发到所有 all_nodes
 ├── smartdns/smartdns.conf           # 全局共用
-├── nft/apply.sh                     # 唯一业务逻辑
-└── nft/<env>/mappings.txt           # proto lport dip dport
+└── nft/forwards.yml                 # 运行参数 + 按主机名的 DNAT
 ```
 
 Realm 仅部署到私有 inventory 的 `realm_nodes`。节点从 `realm_nodes` 移除但仍保留在
@@ -134,7 +133,7 @@ ssh-keygen -t ed25519 -C "id_ed25519_github" -f ~/.ssh/id_ed25519_github -N ""
 **推荐（新机）**：在 **messup-private** `inventory.ini` 写临时密码，由 Ansible 自动装钥：
 
 ```ini
-hosts.ini 放连接信息；nft.ini 放 `nft_nodes` 与 `nft_deployment_env`
+hosts.ini 放连接信息；nft.ini 放 `nft_nodes`
 ```
 
 push 后 CI / 本地 `deploy.sh` 会：先试密钥 → 失败则用密码装公钥 → 关 sshd 密码登录 → 密钥复核 → 业务部署。  
@@ -274,8 +273,7 @@ git add -A && git commit -m "add node-b" && git push
 | `messup-private/singbox/**` | `singbox` + 全部 `singbox_nodes` |
 | `messup-private/singbox/` 根目录共享文件 | 全部 `singbox_nodes` |
 | `messup-private/smartdns/**` | 全部 `smartdns_nodes` |
-| `messup-private/nft/<env>/**` | `nft_nodes ∩ nft_deployment_env=<env>` |
-| `messup-private/nft/` 根目录共享文件 | 全部 `nft_nodes` |
+| `messup-private/nft/**` | 全部 `nft_nodes` |
 | `messup-private/inventory/hosts.ini` / `group_vars/all.yml` / `.deployignore` | 全量，等待 `production` 审批 |
 | `messup-private/inventory/<service>.ini` | 比较该服务成员，新增/移除节点仅执行该服务；移除成员需审批 |
 | `messup-private/inventory/host_vars/<节点>.yml` | 根据 `<service>_` 前缀部署该节点对应服务 |
@@ -316,7 +314,7 @@ git add -A && git commit -m "add node-b" && git push
 # messup-private
 vim singbox/config.json.j2         # → tags=singbox，配置变了会 Restart singbox
 vim smartdns/smartdns.conf         # → tags=smartdns（全局共用）
-vim nft/rear/mappings.txt         # → tags=nft（每次成功部署都会 re-apply）
+vim nft/forwards.yml              # → tags=nft（每次成功部署都会 re-apply）
 git add -A && git commit -m "update rear" && git push
 # 或本地: cd messup && ./scripts/deploy.sh --tags singbox --limit <节点名>
 ```
@@ -329,13 +327,13 @@ SSH 到目标机：
 # Alpine (OpenRC)
 rc-service singbox restart|status|stop
 rc-service smartdns restart|status|stop
-rc-service messup-nft restart|status   # oneshot：restart = 再跑 apply.sh
+rc-service messup-nft restart|status   # oneshot：restart = nft -f rules.nft
 rc-update show default
 
 # Debian/Ubuntu (systemd)
 systemctl restart|status|stop singbox
 systemctl restart|status|stop smartdns
-systemctl restart|status messup-nft    # oneshot：restart = 再跑 apply.sh
+systemctl restart|status messup-nft    # oneshot：restart = nft -f rules.nft
 systemctl is-enabled singbox smartdns messup-nft
 ```
 
@@ -357,7 +355,7 @@ sing-box check -c /etc/s-box/config.json
 smartdns -v
 nft list table ip forward
 # 手动 apply：rc-service messup-nft restart  或  systemctl restart messup-nft
-# IN_IF=eth0 OUT_IF=eth0 CFG=/etc/messup-nft/mappings.txt /etc/messup-nft/apply.sh
+# nft -f /etc/messup-nft/rules.nft
 ```
 
 安装路径：
@@ -366,7 +364,7 @@ nft list table ip forward
 |------|---------------|------|--------|
 | sing-box | `/etc/s-box/sing-box` | `/etc/s-box/config.json` | `singbox`（OpenRC 或 systemd） |
 | SmartDNS | `/usr/sbin/smartdns` | `/etc/smartdns/smartdns.conf` | `smartdns` |
-| nft | `/etc/messup-nft/apply.sh` | `/etc/messup-nft/mappings.txt` + `env` | `messup-nft`（oneshot，开机自恢复） |
+| nft | `nft -f /etc/messup-nft/rules.nft` | `/etc/messup-nft/rules.nft` | `messup-nft`（oneshot，开机自恢复） |
 
 ### sing-box 证书同步
 

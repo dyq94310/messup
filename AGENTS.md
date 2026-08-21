@@ -54,7 +54,7 @@
 - 用现有 tags 与 `--limit`；新机：SSH bootstrap → 连通性 → Python → 服务
 - 自动 `deploy_plan`：SSH → 连通性 → **一次** `00-bootstrap-python` → `services.yml`；全量/`site.yml` 仍自带 Python bootstrap。Realm/sing-box playbook 对仍在 `all_nodes` 但已移出服务组的节点执行 stop、disable 和 unit 删除，保留二进制及配置。服务 inventory 成员变化只传入对应服务和变更节点
 - 仅一台 `singbox_cert_source=true`；禁止多源
-- nft：无 CAP/缺配置 soft-skip；preflight 通过后 apply 失败 hard-fail（见 `03-deploy-nft.yml`）
+- nft：无 CAP/无网卡/装包失败 soft-skip；主机名未对齐或 preflight 后 apply 失败 hard-fail（见 `03-deploy-nft.yml`）。规则来自 `nft/forwards.yml`，禁止 tc。
 - 密码/Token/私钥不进 playbook、模板、样例、日志
 
 ## 安全

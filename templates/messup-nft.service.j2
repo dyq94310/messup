@@ -7,8 +7,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-EnvironmentFile=-{{ nft_install_dir }}/env
-ExecStart={{ nft_install_dir }}/apply.sh
+ExecStart=/bin/sh -c 'nft -f {{ nft_install_dir }}/rules.nft'
 ExecStop=/bin/sh -c 'nft list table ip forward >/dev/null 2>&1 && nft delete table ip forward || true'
 
 [Install]

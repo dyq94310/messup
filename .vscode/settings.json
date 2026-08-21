@@ -5,11 +5,13 @@
     "**/playbooks/tasks/**/*.yml",
     "**/playbooks/tasks/**/*.yaml",
     "**/templates/**/*.j2",
-    "**/.github/workflows/*.yml",
-    "**/.github/workflows/*.yaml",
-    "**/.gitea/workflows/*.yml",
-    "**/.gitea/workflows/*.yaml",
-    "**/.forgejo/workflows/*.yml",
-    "**/.forgejo/workflows/*.yaml"
+    "**/docker-compose.yml",
+    "**/docker-compose.yaml",
+    "**/docker-compose.*.yml",
+    "**/docker-compose.*.yaml",
+    "**/compose.yml",
+    "**/compose.yaml",
+    "**/compose.*.yml",
+    "**/compose.*.yaml"
   ]
 }
