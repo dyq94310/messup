@@ -18,6 +18,8 @@ trim() {
 }
 
 while IFS= read -r line; do
+  # Ansible may emit ANSI color sequences even when recap is redirected through tee.
+  line=$(printf '%s' "$line" | sed $'s/\033\\[[0-9;]*m//g')
   if [[ "$line" =~ ^[[:space:]]*([^:]+)[[:space:]]*:[[:space:]]+ok=([0-9]+)[[:space:]]+changed=([0-9]+)[[:space:]]+unreachable=([0-9]+)[[:space:]]+failed=([0-9]+)[[:space:]]+skipped=([0-9]+) ]]; then
     host=$(trim "${BASH_REMATCH[1]}")
     [ -n "$host" ] || continue

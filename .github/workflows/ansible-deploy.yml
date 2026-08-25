@@ -215,7 +215,7 @@ jobs:
         id: ssh_bootstrap
         env:
           ANSIBLE_HOST_KEY_CHECKING: "False"
-          ANSIBLE_FORCE_COLOR: "1"
+          ANSIBLE_FORCE_COLOR: "0"
           ANSIBLE_SSH_RETRIES: "3"
           # 避免 ansible.cfg 的 ControlMaster 与密码会话串扰
           ANSIBLE_SSH_ARGS: "-o ControlMaster=no -o ControlPath=none -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
@@ -286,7 +286,7 @@ jobs:
         id: play
         env:
           ANSIBLE_HOST_KEY_CHECKING: "False"
-          ANSIBLE_FORCE_COLOR: "1"
+          ANSIBLE_FORCE_COLOR: "0"
           ANSIBLE_SSH_RETRIES: "3"
           DEPLOY_PLAN: ${{ needs.detect.outputs.deploy_plan }}
           ANSIBLE_SSH_ARGS: >-
