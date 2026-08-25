@@ -188,7 +188,7 @@
           {{
             _singbox_inbound_files
             | map('basename')
-            | map('regex_replace', '\\.json$', '')
+            | map('regex_replace', '[.]json$', '')
             | reject('in', singbox_ports.keys() | list)
             | list
           }}
