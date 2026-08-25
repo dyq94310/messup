@@ -140,6 +140,7 @@ jobs:
     timeout-minutes: 30
     env:
       BARK_SUMMARY_FILE: ${{ github.workspace }}/bark-summary-deploy.txt
+      DEPLOY_STATUS_FILE: ${{ github.workspace }}/ansible-deploy-status.tsv
 
     steps:
       - name: Checkout public playbooks (messup)
@@ -166,6 +167,18 @@ jobs:
           path: private-config
           # 自动部署固定到触发 dispatch 的私有仓提交，避免排队期间读取更新后的 main。
           ref: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.sha || 'main' }}
+
+      - name: Read private config commit title
+        id: private_commit
+        working-directory: private-config
+        run: |
+          set -euo pipefail
+          title=$(git log -1 --format=%s)
+          title=${title//$'\n'/ }
+          title=${title//$'\r'/ }
+          title=${title//$'\t'/ }
+          title=${title:0:200}
+          printf 'commit_title=%s\n' "$title" >> "$GITHUB_OUTPUT"
 
       - name: Setup SSH for Ansible → managed nodes (same id_ed25519_github)
         run: |
@@ -290,24 +303,37 @@ jobs:
           set -euo pipefail
           mkdir -p ~/.ansible/cp
           chmod 700 ~/.ansible/cp
+          : > "$DEPLOY_STATUS_FILE"
           TAGS="${{ needs.detect.outputs.tags }}"
           LIMIT="${{ needs.detect.outputs.limit }}"
           REACH_LIMIT="${{ steps.conn.outputs.reachable_limit }}"
           run_playbook() {
-            local playbook="$1" hosts="$2"
+            local playbook="$1" hosts="$2" tag="${3:-}"
+            local service="${tag:-all}"
             shift 2
             local -a extra=(--limit "$hosts")
             # remaining args are optional --tags values
             if [ "$#" -gt 0 ] && [ -n "${1:-}" ]; then
               extra+=(--tags "$1")
             fi
+            local recap_log
+            recap_log=$(mktemp "${RUNNER_TEMP:-/tmp}/ansible-recap.XXXXXX")
             echo "Running: ansible-playbook ${playbook} ${extra[*]}"
             ansible-playbook \
               -i private-config/inventory/ \
               "$playbook" \
               --private-key ~/.ssh/id_ed25519_github \
               -e "private_config_temp=${GITHUB_WORKSPACE}/private-config" \
-              "${extra[@]}"
+              "${extra[@]}" 2>&1 | tee "$recap_log"
+            local rc=${PIPESTATUS[0]}
+            if [ -n "$service" ]; then
+              bash scripts/parse-ansible-recap.sh "$recap_log" "$service" \
+                >> "$DEPLOY_STATUS_FILE" || {
+                  echo "::warning::无法解析 Ansible PLAY RECAP（${playbook} / ${service}）"
+                }
+            fi
+            rm -f "$recap_log"
+            return "$rc"
           }
 
           filter_reachable() {
@@ -380,31 +406,35 @@ jobs:
 
       - name: Deploy finished
         if: success()
+        env:
+          TAGS: ${{ needs.detect.outputs.tags }}
+          LIMIT: ${{ needs.detect.outputs.limit }}
+          DEPLOY_PLAN: ${{ needs.detect.outputs.deploy_plan }}
+          COMMIT_TITLE: ${{ steps.private_commit.outputs.commit_title }}
+          MODE: ${{ needs.detect.outputs.mode }}
+          REACHABLE: ${{ steps.conn.outputs.reachable_limit }}
+          UNREACHABLE: ${{ steps.conn.outputs.unreachable_hosts }}
+          PLAYBOOK_RC: ${{ steps.play.outputs.playbook_rc }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           chmod +x scripts/render-deploy-summary.sh
-          TAGS="${{ needs.detect.outputs.tags }}" \
-          LIMIT="${{ needs.detect.outputs.limit }}" \
-          COMMIT_TITLE="${{ needs.detect.outputs.commit_title }}" \
-          MODE="${{ needs.detect.outputs.mode }}" \
-          REACHABLE="${{ steps.conn.outputs.reachable_limit }}" \
-          UNREACHABLE="${{ steps.conn.outputs.unreachable_hosts }}" \
-          PLAYBOOK_RC="${{ steps.play.outputs.playbook_rc }}" \
-          EVENT_NAME="${{ github.event_name }}" \
           ./scripts/render-deploy-summary.sh
 
       - name: Deploy failed
         if: failure()
+        env:
+          TAGS: ${{ needs.detect.outputs.tags }}
+          LIMIT: ${{ needs.detect.outputs.limit }}
+          DEPLOY_PLAN: ${{ needs.detect.outputs.deploy_plan }}
+          COMMIT_TITLE: ${{ steps.private_commit.outputs.commit_title }}
+          MODE: ${{ needs.detect.outputs.mode }}
+          REACHABLE: ${{ steps.conn.outputs.reachable_limit }}
+          UNREACHABLE: ${{ steps.conn.outputs.unreachable_hosts }}
+          PLAYBOOK_RC: ${{ steps.play.outputs.playbook_rc }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           echo "::error::Ansible deploy failed. 若全部主机不可达：检查密钥/端口；若单机任务失败：查看 playbook 日志。"
           chmod +x scripts/render-deploy-summary.sh
-          TAGS="${{ needs.detect.outputs.tags }}" \
-          LIMIT="${{ needs.detect.outputs.limit }}" \
-          COMMIT_TITLE="${{ needs.detect.outputs.commit_title }}" \
-          MODE="${{ needs.detect.outputs.mode }}" \
-          REACHABLE="${{ steps.conn.outputs.reachable_limit }}" \
-          UNREACHABLE="${{ steps.conn.outputs.unreachable_hosts }}" \
-          PLAYBOOK_RC="${{ steps.play.outputs.playbook_rc }}" \
-          EVENT_NAME="${{ github.event_name }}" \
           ./scripts/render-deploy-summary.sh
           exit 1
 
