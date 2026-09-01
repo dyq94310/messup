@@ -182,37 +182,25 @@
         fail_msg: "❌ 找不到 sing-box inbound 配置文件: {{ _singbox_config_dir }}/inbounds/*.json"
       when: _singbox_config_source == 'template'
 
+    - name: Resolve invalid sing-box inbound filenames
+      set_fact:
+        _singbox_invalid_inbound_files: >-
+          {{
+            _singbox_inbound_files
+            | map('basename')
+            | map('regex_replace', '[.]json$', '')
+            | reject('in', singbox_ports.keys() | list)
+            | list
+          }}
+      when: _singbox_config_source == 'template'
+
     - name: Validate sing-box inbound filenames
       assert:
         that:
-          - (item | basename | replace('.json', '')) in singbox_ports
+          - _singbox_invalid_inbound_files | length == 0
         fail_msg: >-
-          ❌ inbound 文件名必须对应现有 port_key：{{ item | basename }}。
-      loop: "{{ _singbox_inbound_files }}"
-      loop_control:
-        label: "{{ item | basename }}"
-      when: _singbox_config_source == 'template'
-
-    - name: Check sing-box inbound files exist on control node
-      stat:
-        path: "{{ item }}"
-      delegate_to: localhost
-      become: false
-      register: _singbox_inbound_file_stats
-      loop: "{{ _singbox_inbound_files }}"
-      loop_control:
-        label: "{{ item | basename }}"
-      when: _singbox_config_source == 'template'
-
-    - name: Require sing-box inbound files
-      assert:
-        that:
-          - item.stat.exists
-          - item.stat.isreg
-        fail_msg: "❌ 找不到 sing-box inbound 配置: {{ item.item | basename }}"
-      loop: "{{ _singbox_inbound_file_stats.results }}"
-      loop_control:
-        label: "{{ item.item | basename }}"
+          ❌ inbound 文件名必须对应现有 port_key，当前无效文件：
+          {{ _singbox_invalid_inbound_files | join(', ') }}。
       when: _singbox_config_source == 'template'
 
     - name: Assemble sing-box inbounds for selected port profile

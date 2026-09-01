@@ -4,7 +4,7 @@
 # an internal connection variable and is never intentionally rendered here.
 #
 # Matrix cells are planned scope (tags + inventory groups), not per-task success.
-# Row "结果" reflects SSH precheck + overall playbook exit code only.
+# Bark host lines use the compact per-host PLAY RECAP results collected by CI.
 set -euo pipefail
 
 INVENTORY="${INVENTORY:-private-config/inventory/}"
@@ -15,9 +15,11 @@ UNREACHABLE="${UNREACHABLE:-}"
 PLAYBOOK_RC="${PLAYBOOK_RC:-}"
 MODE="${MODE:-}"
 EVENT_NAME="${EVENT_NAME:-}"
+DEPLOY_PLAN="${DEPLOY_PLAN:-}"
 COMMIT_TITLE="${COMMIT_TITLE:-私有仓提交标题未知}"
 SUMMARY="${GITHUB_STEP_SUMMARY:-}"
 BARK_SUMMARY_FILE="${BARK_SUMMARY_FILE:-}"
+DEPLOY_STATUS_FILE="${DEPLOY_STATUS_FILE:-}"
 
 if [ -z "$SUMMARY" ]; then
   echo "GITHUB_STEP_SUMMARY is required" >&2
@@ -120,6 +122,75 @@ service_status() {
   fi
 }
 
+declare -A host_service_changed host_service_failed host_service_unreachable
+declare -A host_service_seen host_service_list
+if [ -n "$DEPLOY_STATUS_FILE" ] && [ -r "$DEPLOY_STATUS_FILE" ]; then
+  while IFS=$'\t' read -r service host changed failed unreachable skipped; do
+    [ -n "$service" ] && [ -n "$host" ] || continue
+    host="${host%$'\r'}"
+    changed="${changed:-0}"
+    failed="${failed:-0}"
+    unreachable="${unreachable:-0}"
+    skipped="${skipped:-0}"
+    key="${host}"$'\034'"${service}"
+    if [ -z "${host_service_seen[$key]+set}" ]; then
+      host_service_seen[$key]=1
+      host_service_list["$host"]+="${host_service_list[$host]:+$'\n'}${service}"
+      host_service_changed[$key]=0
+      host_service_failed[$key]=0
+      host_service_unreachable[$key]=0
+    fi
+    host_service_changed[$key]=$((host_service_changed[$key] + changed))
+    host_service_failed[$key]=$((host_service_failed[$key] + failed))
+    host_service_unreachable[$key]=$((host_service_unreachable[$key] + unreachable))
+  done < "$DEPLOY_STATUS_FILE"
+fi
+
+host_result_line() {
+  local host="$1"
+  local service key details="" marker="✅" has_record=0 has_unreachable=0
+  local changed failed unreachable
+
+  if contains_word "$UNREACHABLE" "$host"; then
+    printf '⚠️ %s · SSH 不可达' "$host"
+    return
+  fi
+
+  while IFS= read -r service; do
+    [ -n "$service" ] || continue
+    key="${host}"$'\034'"${service}"
+    [ -n "${host_service_seen[$key]+set}" ] || continue
+    has_record=1
+    changed="${host_service_changed[$key]}"
+    failed="${host_service_failed[$key]}"
+    unreachable="${host_service_unreachable[$key]}"
+    if [ "$unreachable" -gt 0 ]; then
+      has_unreachable=1
+      continue
+    fi
+    if [ "$failed" -gt 0 ]; then
+      marker="❌"
+      details+="${details:+, }${service} · failed=${failed}"
+    elif [ "$changed" -gt 0 ]; then
+      details+="${details:+, }${service} · changed=${changed}"
+    else
+      details+="${details:+, }${service} · 无变更"
+    fi
+  done <<< "${host_service_list[$host]:-}"
+
+  if [ "$has_unreachable" -eq 1 ]; then
+    printf '⚠️ %s · SSH 不可达' "$host"
+  elif [ "$has_record" -eq 0 ]; then
+    if [ "$PLAYBOOK_RC" != "" ] && [ "$PLAYBOOK_RC" != "0" ] && [ "$PLAYBOOK_RC" != "3" ]; then
+      printf '❌ %s · 未执行' "$host"
+    else
+      printf '⚪ %s · 未获取到结果' "$host"
+    fi
+  else
+    printf '%s %s · %s' "$marker" "$host" "$details"
+  fi
+}
+
 result_text=""
 case "$PLAYBOOK_RC" in
   0)
@@ -134,6 +205,19 @@ case "$PLAYBOOK_RC" in
   *) result_text="流水线失败（rc=$PLAYBOOK_RC）" ;;
 esac
 
+case "$PLAYBOOK_RC" in
+  0)
+    if [ -n "$UNREACHABLE" ]; then
+      bark_result_text="⚠️ 部署完成，但存在不可达主机"
+    else
+      bark_result_text="✅ 部署成功"
+    fi
+    ;;
+  3) bark_result_text="⚠️ 部署完成，但存在不可达主机" ;;
+  "") bark_result_text="⚪ 未执行或结果未知" ;;
+  *) bark_result_text="❌ 部署失败" ;;
+esac
+
 target_count=$(printf '%s\n' "$target_hosts" | sed '/^$/d' | wc -l | tr -d ' ')
 if [ -n "$LIMIT" ] && [ "$LIMIT" != "<all>" ]; then
   deploy_mode="定向节点收敛"
@@ -141,10 +225,14 @@ else
   deploy_mode="全量部署"
 fi
 
-if [ -z "$TAGS" ] || [ "$TAGS" = "<all>" ]; then
+if [ -n "$DEPLOY_PLAN" ] \
+  && service_scope=$(jq -r 'reduce .targets[]?.tag as $tag ([]; if index($tag) then . else . + [$tag] end) | join(", ")' <<< "$DEPLOY_PLAN" 2>/dev/null) \
+  && [ -n "$service_scope" ]; then
+  :
+elif [ -z "$TAGS" ] || [ "$TAGS" = "<all>" ]; then
   service_scope="全部服务"
 else
-  service_scope="$TAGS"
+  service_scope=$(printf '%s' "$TAGS" | sed 's/,/, /g')
 fi
 
 {
@@ -209,14 +297,19 @@ fi
 } >> "$SUMMARY"
 
 if [ -n "$BARK_SUMMARY_FILE" ]; then
+  commit_title="${COMMIT_TITLE:-私有仓提交标题未知}"
+  commit_title="${commit_title//$'\n'/ }"
+  commit_title="${commit_title//$'\r'/ }"
+  commit_title="${commit_title//$'\t'/ }"
   {
-    echo "结果: ${result_text}"
-    echo "配置提交: ${COMMIT_TITLE}"
-    echo "部署模式: ${deploy_mode}"
-    echo "目标节点: ${target_count} 台"
-    echo "服务: ${service_scope}"
-    echo "不可达节点: ${UNREACHABLE:-none}"
-    echo "触发事件: ${EVENT_NAME:-unknown}"
-    echo "说明: 矩阵为计划范围，非 per-task"
+    echo "Ansible 部署"
+    echo "状态: ${bark_result_text} · 部署内容: ${service_scope}"
+    echo "私有仓提交: ${commit_title}"
+    echo ""
+    echo "主机结果:"
+    while IFS= read -r host; do
+      [ -z "$host" ] && continue
+      printf '%s\n' "$(host_result_line "$host")"
+    done <<< "$target_hosts"
   } > "$BARK_SUMMARY_FILE"
 fi

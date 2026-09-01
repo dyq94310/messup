@@ -74,13 +74,25 @@ jobs:
             summary="摘要未生成"
           fi
 
-          body=$(printf '%s\n执行结果: %s\n开始时间: %s\n结束时间: %s\n耗时: %s\n%s' \
-            "${WORKFLOW} | ${BRANCH} | ${short_sha}" \
-            "${RESULT}" \
-            "${start_time}" \
-            "${finish_time}" \
-            "${duration_text}" \
-            "${summary}")
+          summary_with_duration=""
+          while IFS= read -r line; do
+            if [[ "${line}" == 状态:* ]]; then
+              line="${line} · 耗时: ${duration_text}"
+            fi
+            summary_with_duration+="${summary_with_duration:+$'\n'}${line}"
+          done <<< "${summary}"
+
+          if [[ "${summary}" == $'Ansible 部署\n'* ]]; then
+            body="${summary_with_duration}"
+          else
+            body=$(printf '%s\n执行结果: %s\n开始时间: %s\n结束时间: %s\n耗时: %s\n%s' \
+              "${WORKFLOW} | ${BRANCH} | ${short_sha}" \
+              "${RESULT}" \
+              "${start_time}" \
+              "${finish_time}" \
+              "${duration_text}" \
+              "${summary}")
+          fi
           level="active"
           if [ "${RESULT}" = "success" ]; then
             level="passive"
