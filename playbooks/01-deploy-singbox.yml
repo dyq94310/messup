@@ -449,12 +449,24 @@
       changed_when: false
       failed_when: false
 
+    - name: Match installed sing-box version exactly
+      set_fact:
+        _installed_version_matches: >-
+          {{
+            (_installed_ver.stdout | default(''))
+            is search(
+              '(?m)^sing-box version\\s+'
+              ~ (singbox_version | regex_escape)
+              ~ '(?:\\s|$)'
+            )
+          }}
+
     - name: Decide whether binary reinstall is needed
       set_fact:
         _need_bin_install: >-
           {{
             (_installed_ver.rc | default(1) != 0) or
-            (singbox_version not in (_installed_ver.stdout | default('')))
+            (not _installed_version_matches)
           }}
 
     - name: Download sing-box release
