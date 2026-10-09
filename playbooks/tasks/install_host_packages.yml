@@ -3,10 +3,7 @@
 - name: Install packages (Alpine)
   block:
     - name: Install apk lock helper
-      ansible.builtin.copy:
-        src: "{{ playbook_dir }}/../files/messup-apk-locked.sh"
-        dest: /usr/local/sbin/messup-apk-locked
-        mode: "0755"
+      ansible.builtin.include_tasks: install_apk_lock_helper.yml
 
     - name: Install packages through apk lock helper
       ansible.builtin.command:

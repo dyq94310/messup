@@ -1,0 +1,12 @@
+---
+- name: Ensure apk lock helper directory
+  ansible.builtin.file:
+    path: /usr/local/sbin
+    state: directory
+    mode: "0755"
+
+- name: Install apk lock helper
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../files/messup-apk-locked.sh"
+    dest: /usr/local/sbin/messup-apk-locked
+    mode: "0755"
