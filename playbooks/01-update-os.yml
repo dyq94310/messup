@@ -15,9 +15,21 @@
           changed_when: false
           failed_when: false
 
+        - name: Install apk update helper
+          ansible.builtin.copy:
+            src: "{{ playbook_dir }}/../files/messup-apk-locked.sh"
+            dest: /usr/local/sbin/messup-apk-locked
+            mode: "0755"
+          when: "'alpine' in (os_release.stdout | lower)"
+
         - name: Alpine update
-          ansible.builtin.command: |
-            apk update && apk upgrade --no-cache
+          ansible.builtin.command:
+            argv:
+              - /usr/local/sbin/messup-apk-locked
+              - update
+          environment:
+            MESSUP_APK_LOCK_TIMEOUT: "30"
+            MESSUP_APK_COMMAND_TIMEOUT: "1800"
           when: "'alpine' in (os_release.stdout | lower)"
           register: result_alpine
           changed_when: result_alpine.rc == 0

@@ -50,8 +50,81 @@
     - name: "[Alpine] Install Python3 + ca-certificates via raw"
       raw: |
         set -e
-        apk update
-        apk add --no-cache python3 ca-certificates
+        lock=/run/messup-apk.lock
+        db_lock=/lib/apk/db/lock
+        timeout_s=30
+        now() { date +%s; }
+        is_self() { [ "$1" = "$$" ] || [ "$1" = "1" ]; }
+        list_lock_pids() {
+          pids=""
+          for dir in /proc/[0-9]*; do
+            pid=${dir#/proc/}
+            is_self "$pid" && continue
+            [ -d "$dir/fd" ] || continue
+            for fd in "$dir"/fd/*; do
+              target=$(readlink "$fd" 2>/dev/null) || continue
+              if [ "$target" = "$db_lock" ]; then
+                case " $pids " in *" $pid "*) ;; *) pids="$pids $pid" ;; esac
+                break
+              fi
+            done
+          done
+          printf '%s\n' "${pids# }"
+        }
+        kill_pids() {
+          [ -n "$1" ] || return 0
+          echo "killing apk lock holders: $1" >&2
+          for pid in $1; do kill -TERM "$pid" 2>/dev/null || true; done
+          sleep 3
+          for pid in $1; do
+            kill -0 "$pid" 2>/dev/null && kill -KILL "$pid" 2>/dev/null || true
+          done
+        }
+        steal_lock() {
+          owner=""
+          [ -r "$lock/pid" ] && owner=$(cat "$lock/pid" 2>/dev/null || true)
+          [ -n "$owner" ] && ! is_self "$owner" && kill_pids "$owner"
+          kill_pids "$(list_lock_pids)"
+          rm -rf "$lock"
+        }
+        start=$(now)
+        stolen=0
+        while ! mkdir "$lock" 2>/dev/null; do
+          owner=""
+          [ -r "$lock/pid" ] && owner=$(cat "$lock/pid" 2>/dev/null || true)
+          if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
+            rm -rf "$lock"
+            continue
+          fi
+          if [ "$(( $(now) - start ))" -ge "$timeout_s" ]; then
+            [ "$stolen" -eq 1 ] && { echo "apk lock still held after killing holders" >&2; exit 75; }
+            steal_lock
+            stolen=1
+            continue
+          fi
+          sleep 5
+        done
+        echo "$$" > "$lock/pid"
+        trap 'rm -rf "$lock"' EXIT HUP INT TERM
+        wait_start=$(now)
+        killed=0
+        while :; do
+          rc=0
+          out=$(timeout 1800 apk add --no-cache --update-cache python3 ca-certificates 2>&1) || rc=$?
+          [ -n "$out" ] && printf '%s\n' "$out"
+          [ "$rc" -eq 0 ] && exit 0
+          case "$out" in
+            *"Unable to lock database"*|*"Failed to open apk database"*|*"Resource temporarily unavailable"*) ;;
+            *) exit "$rc" ;;
+          esac
+          [ "$killed" -eq 1 ] && { echo "apk lock still held after killing holders" >&2; exit 75; }
+          if [ "$(( $(now) - wait_start ))" -ge "$timeout_s" ]; then
+            kill_pids "$(list_lock_pids)"
+            killed=1
+            continue
+          fi
+          sleep 5
+        done
       args:
         executable: /bin/sh
       register: alpine_py

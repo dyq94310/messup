@@ -24,6 +24,13 @@
           changed_when: false
           failed_when: false
 
+        - name: Install apk update helper
+          ansible.builtin.copy:
+            src: "{{ playbook_dir }}/../files/messup-apk-locked.sh"
+            dest: /usr/local/sbin/messup-apk-locked
+            mode: "0755"
+          when: "'alpine' in (os_release.stdout | lower)"
+
         - name: Install Debian cron package when missing
           ansible.builtin.apt:
             name: cron
@@ -39,7 +46,7 @@
             minute: "{{ cron_minute }}"
             hour: "{{ cron_hour }}"
             weekday: "{{ cron_weekday }}"
-            job: "apk update && apk upgrade --no-cache"
+            job: "/usr/local/sbin/messup-apk-locked update >> /var/log/messup-apk-update.log 2>&1"
             state: present
           when: "'alpine' in (os_release.stdout | lower)"
           register: result_alpine

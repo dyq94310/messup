@@ -82,18 +82,35 @@
         _nft_skip_reason: "unsupported OS (need Alpine or Debian/Ubuntu)"
       when: _nft_ok | bool and _init == 'unknown'
 
-    # Soft-fail package path stays inline (ignore_errors); shared install_host_packages is hard-fail.
+    # Soft-fail package path stays inline; shared install_host_packages is hard-fail.
     - name: Install nftables, iptables, iproute2 (Alpine)
-      apk:
-        name:
-          - nftables
-          - iptables
-          - iproute2
-        state: present
-        update_cache: true
+      block:
+        - name: Install apk lock helper
+          ansible.builtin.copy:
+            src: "{{ playbook_dir }}/../files/messup-apk-locked.sh"
+            dest: /usr/local/sbin/messup-apk-locked
+            mode: "0755"
+        - name: Install packages through apk lock helper
+          ansible.builtin.command:
+            argv:
+              - /usr/local/sbin/messup-apk-locked
+              - install
+              - nftables
+              - iptables
+              - iproute2
+          environment:
+            MESSUP_APK_LOCK_TIMEOUT: "30"
+            MESSUP_APK_COMMAND_TIMEOUT: "1800"
+          register: _nft_pkg_alpine
+        - name: Record Alpine nft package install success
+          set_fact:
+            _nft_pkg_failed: false
+      rescue:
+        - name: Record Alpine nft package install failure
+          set_fact:
+            _nft_pkg_failed: true
+            _nft_pkg_fail_msg: "{{ ansible_failed_result.msg | default(ansible_failed_result.stderr | default('apk install failed')) }}"
       when: _nft_ok | bool and (_is_alpine | bool)
-      register: _nft_pkg
-      ignore_errors: true
 
     - name: Ensure Debian python for apt module
       ansible.builtin.include_tasks: tasks/ensure_debian_python.yml
@@ -108,19 +125,28 @@
         state: present
         update_cache: true
       when: _nft_ok | bool and (_is_debian | bool)
-      register: _nft_pkg
+      register: _nft_pkg_debian
       ignore_errors: true
 
     - name: Warn if package install failed
       debug:
-        msg: "⚠️  安装 nftables/iptables/iproute2 失败，跳过本机 nft：{{ _nft_pkg.msg | default('unknown') }}"
-      when: _nft_ok | bool and _nft_pkg is failed
+        msg: >-
+          ⚠️  安装 nftables/iptables/iproute2 失败，跳过本机 nft：{{
+            _nft_pkg_fail_msg | default(_nft_pkg_debian.msg | default('unknown'))
+          }}
+      when: >-
+        _nft_ok | bool and
+        ((_nft_pkg_failed | default(false) | bool) or
+         (_nft_pkg_debian is defined and _nft_pkg_debian is failed))
 
     - name: Mark skip when package install failed
       set_fact:
         _nft_ok: false
         _nft_skip_reason: "package install failed"
-      when: _nft_ok | bool and _nft_pkg is failed
+      when: >-
+        _nft_ok | bool and
+        ((_nft_pkg_failed | default(false) | bool) or
+         (_nft_pkg_debian is defined and _nft_pkg_debian is failed))
 
     - name: Preflight nft netlink (needs CAP_NET_ADMIN)
       command: nft list tables

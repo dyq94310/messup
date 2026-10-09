@@ -1,10 +1,20 @@
 ---
 # Install host packages. Requires messup_apk_packages and messup_apt_packages lists.
 - name: Install packages (Alpine)
-  apk:
-    name: "{{ messup_apk_packages }}"
-    state: present
-    update_cache: true
+  block:
+    - name: Install apk lock helper
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../files/messup-apk-locked.sh"
+        dest: /usr/local/sbin/messup-apk-locked
+        mode: "0755"
+
+    - name: Install packages through apk lock helper
+      ansible.builtin.command:
+        argv: "{{ ['/usr/local/sbin/messup-apk-locked', 'install'] + messup_apk_packages }}"
+      environment:
+        MESSUP_APK_LOCK_TIMEOUT: "30"
+        MESSUP_APK_COMMAND_TIMEOUT: "1800"
+      changed_when: false
   when: _is_alpine | bool
 
 - name: Install packages (Debian)

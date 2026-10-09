@@ -34,18 +34,18 @@
           检测结果={{ _timezone_pkg_mgr.stdout | default('') | trim }}。
       when: (_timezone_pkg_mgr.stdout | default('') | trim) not in ['alpine', 'debian']
 
-    - name: Install timezone database (Alpine)
-      apk:
-        name: tzdata
-        state: present
-      when: (_timezone_pkg_mgr.stdout | default('') | trim) == 'alpine'
+    - name: Record package manager facts
+      set_fact:
+        _is_alpine: "{{ (_timezone_pkg_mgr.stdout | default('') | trim) == 'alpine' }}"
+        _is_debian: "{{ (_timezone_pkg_mgr.stdout | default('') | trim) == 'debian' }}"
 
-    - name: Install timezone database (Debian)
-      apt:
-        name: tzdata
-        state: present
-        update_cache: true
-      when: (_timezone_pkg_mgr.stdout | default('') | trim) == 'debian'
+    - name: Install timezone database
+      ansible.builtin.include_tasks: tasks/install_host_packages.yml
+      vars:
+        messup_apk_packages:
+          - tzdata
+        messup_apt_packages:
+          - tzdata
 
     - name: Link system localtime
       file:
